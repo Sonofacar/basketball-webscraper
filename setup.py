@@ -1,23 +1,27 @@
 from setuptools import setup, find_packages
 
 setup(
-    name = "bball-scraper",  # Fill in your package name
-    version = "0.0.1",  # e.g., "0.1.0"
+    name = "bball-scraper",
+    version = "0.0.1",
     description = "Scrape basketball data from a variety of websites.",
     author = "Carson Buttars",
     author_email = "carsonbuttars13@gmail.com",
 
-    package_dir = {"": "source"},
-    py_modules = ["page_cacher", "debug"],
-    packages = find_packages(where="source"),
+    #package_dir = {"": "source"},
+    packages = find_packages(),
 
     entry_points = {
-        "console-scripts": [
-            "bball_initialize_db = scripts/initialize_db.py:main",
-            "bball_scrape_yearly = scripts/scrape_yearly.py:main",
-            "bball_scrape_daily = scripts/scrape_daily.py:main",
-        ]
+        "console_scripts": [
+            "bballInitializeDB = scripts.initialize_db:main",
+        #     "bball_scrape_yearly = scrape_yearly.py:main",
+        #     "bball_scrape_daily = scrape_daily.py:main",
+        ],
     },
+    # entry_points={
+    #     "console_scripts": [
+    #         "SwarmScrape = SwarmScrape:run_proxy",
+    #     ],
+    # },
 
     install_requires = ["bs4", "requests"],
 

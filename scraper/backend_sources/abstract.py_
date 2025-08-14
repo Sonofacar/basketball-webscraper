@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from debug import debug
+from ..debug import debug
 from functools import wraps
 
 # List of classes:
@@ -32,10 +32,10 @@ class referee_info(debug):
             self._fetched = True
         else:
             self.soup = pager.get(href)
-            self._name = None
-            self._number = None
-            self._birthday = None
-            self._id = None
+            self._name = ""
+            self._number = 0
+            self._birthday = ""
+            self._id = 0
             self._fetched = False
 
     @abstractmethod
@@ -90,10 +90,10 @@ class executive_info(debug):
             self._fetched = True
         else:
             self.soup = pager.get(href)
-            self._name = None
-            self._birthday = None
-            self._teams = None
-            self._id = None
+            self._name = ""
+            self._birthday = ""
+            self._teams = ""
+            self._id = 0
             self._fetched = False
 
     @abstractmethod
@@ -148,12 +148,12 @@ class coach_info(debug):
             self._fetched = True
         else:
             self.soup = pager.get(href)
-            self._name = None
-            self._birthday = None
-            self._wins = None
-            self._losses = None
-            self._teams = None
-            self._id = None
+            self._name = ""
+            self._birthday = ""
+            self._wins = 0
+            self._losses = 0
+            self._teams = ""
+            self._id = 0
             self._fetched = False
 
     @abstractmethod
@@ -220,18 +220,18 @@ class player_info(debug):
             self._fetched = True
         else:
             self.soup = pager.get(href)
-            self._name = None
-            self._shoots = None
-            self._birthday = None
-            self._high_school = None
-            self._college = None
-            self._draft_position = None
-            self._draft_team = None
-            self._draft_year = None
-            self._debut_date = None
-            self._career_seasons = None
-            self._teams = None
-            self._id = None
+            self._name = ""
+            self._shoots = ""
+            self._birthday = ""
+            self._high_school = 0
+            self._college = 0
+            self._draft_position = 0
+            self._draft_team = ""
+            self._draft_year = 0
+            self._debut_date = ""
+            self._career_seasons = 0
+            self._teams = ""
+            self._id = 0
             self._fetched = False
 
     @abstractmethod
@@ -333,18 +333,18 @@ class team_info(debug):
             self._fetched = True
         else: 
             self.soup = pager.get(href)
-            self._name = None
-            self._abbreviation = None
-            self._wins = None
-            self._losses = None
-            self._location = None
-            self._playoff_appearance = None
-            self._ranking = None
-            self._id = None
-            self._season = None
-            self._executive = None
+            self._name = ""
+            self._abbreviation = ""
+            self._wins = 0
+            self._losses = 0
+            self._location = ""
+            self._playoff_appearance = 0
+            self._ranking = 0
+            self._id = 0
+            self._season = 0
+            self._executive = 0
             self._executive_href = None
-            self._coach = None
+            self._coach = 0
             self._coach_href = None
             self._fetched = False
 
@@ -462,22 +462,22 @@ class season_info(debug):
             self._fetched = True
         else: 
             self.soup = pager.get(href)
-            self._season = None
-            self._games = None
-            self._teams = None
-            self._champion = None
+            self._season = 0
+            self._games = 0
+            self._teams = 0
+            self._champion = 0
             self._champion_href = None
-            self._finals_mvp = None
+            self._finals_mvp = 0
             self._finals_mvp_href = None
-            self._mvp = None
+            self._mvp = 0
             self._mvp_href = None
-            self._dpoy = None
+            self._dpoy = 0
             self._dpoy_href = None
-            self._mip = None
+            self._mip = 0
             self._mip_href = None
-            self._sixmoty = None
+            self._sixmoty = 0
             self._sixmoty_href = None
-            self._roty = None
+            self._roty = 0
             self._roty_href = None
             self._schedule = []
             self._rankings = None
@@ -642,22 +642,22 @@ class game_info(debug):
             self._fetched = True
         else: 
             self.soup = pager.get(href)
-            self._home_team_name = None
+            self._home_team_name = ""
             self._home_team_href = None
-            self._away_team_name = None
+            self._away_team_name = ""
             self._away_team_href = None
-            self._date = None
-            self._location = None
-            self._duration = None
-            self._attendance = None
-            self._id = None
-            self._home_team_id = None
-            self._away_team_id = None
-            self._season = None
-            self._playoffs = None
-            self._in_season_tournament = None
-            self._play_in = None
-            self._referee_ids = [None, None, None]
+            self._date = ""
+            self._location = ""
+            self._duration = 0
+            self._attendance = 0
+            self._id = 0
+            self._home_team_id = 0
+            self._away_team_id = 0
+            self._season = 0
+            self._playoffs = 0
+            self._in_season_tournament = 0
+            self._play_in = 0
+            self._referee_ids = [0, 0, 0]
             self._referee_hrefs = [None, None, None]
             self._fetched = False
             self._type = 'regular'
@@ -848,10 +848,19 @@ class game_data(debug):
     def team_data_quarters(self):
         return self._team_data_quarters
 
+    @staticmethod
+    def replace_none(l, value):
+        l[:] = [x if x is not None else value for x in l]
+
+    def set_defaults(self):
+        for key in self.player_data_quarters.keys():
+            pass
+
     def fetch(self):
         if self._fetched:
             return # Already fetched
         self._fetch()
+        self.set_defaults()
         self._fetched = True
 
 def empty_href_wrap(function):
@@ -865,21 +874,24 @@ def empty_href_wrap(function):
     return wrapper
 
 class engine(debug):
-    def __init__(self):
-        self.referee_max_id = 0
-        self.executive_max_id = 0
-        self.coach_max_id = 0
-        self.player_max_id = 0
-        self.team_max_id = 0
-        self.game_max_id = 0
-        self.referee_id_cache = {}
-        self.executive_id_cache = {}
-        self.coach_id_cache = {}
-        self.player_id_cache = {}
-        self.team_id_cache = {}
-        self.season_id_cache = {}
-        self.game_id_cache = {}
-        self.rankings = {}
+    def __init__(self, pager, database):
+        self.pager = pager
+        self.database = database
+
+    referee_max_id = 0
+    executive_max_id = 0
+    coach_max_id = 0
+    player_max_id = 0
+    team_max_id = 0
+    game_max_id = 0
+    referee_id_cache = {}
+    executive_id_cache = {}
+    coach_id_cache = {}
+    player_id_cache = {}
+    team_id_cache = {}
+    season_id_cache = {}
+    game_id_cache = {}
+    rankings = {}
 
     def save(self, data, location):
         match location:
@@ -914,75 +926,75 @@ class engine(debug):
         else:
             return obj.id
 
-    def link_game_data(self, table, pager):
-        tmp = [self.get_game_info(x, pager) for x in table['Game_ID']]
+    def link_game_data(self, table):
+        tmp = [self.get_game_info(x) for x in table['Game_ID']]
         ids = [self.safe_set_id(x) for x in tmp]
         table.update({'Game_ID': ids})
 
-        tmp = [self.get_team_info(x, pager) for x in table['Team_ID']]
+        tmp = [self.get_team_info(x) for x in table['Team_ID']]
         ids = [self.safe_set_id(x) for x in tmp]
         table.update({'Team_ID': ids})
 
-        tmp = [self.get_team_info(x, pager) for x in table['Opponent_ID']]
+        tmp = [self.get_team_info(x) for x in table['Opponent_ID']]
         ids = [self.safe_set_id(x) for x in tmp]
         table.update({'Opponent_ID': ids})
 
         if 'Player_ID' in table.keys():
-            tmp = [self.get_player_info(x, pager) for x in table['Player_ID']]
+            tmp = [self.get_player_info(x) for x in table['Player_ID']]
             ids = [self.safe_set_id(x) for x in tmp]
             table.update({'Player_ID': ids})
 
-    def get_links(self, obj, pager):
+    def get_links(self, obj):
         if issubclass(obj.__class__, team_info):
-            executive = self.get_executive_info(obj.executive_href, pager)
+            executive = self.get_executive_info(obj.executive_href)
             obj.executive = self.safe_set_id(executive)
-            coach = self.get_coach_info(obj.coach_href, pager)
+            coach = self.get_coach_info(obj.coach_href)
             obj.coach = self.safe_set_id(coach)
             rank = self.rankings.get(obj.href, None)
             obj.refresh_output()
 
         elif issubclass(obj.__class__, season_info):
-            champion = self.get_team_info(obj.champion_href, pager)
+            champion = self.get_team_info(obj.champion_href)
             obj.champion = self.safe_set_id(champion)
-            finals_mvp = self.get_player_info(obj.finals_mvp_href, pager)
+            finals_mvp = self.get_player_info(obj.finals_mvp_href)
             obj.finals_mvp = self.safe_set_id(finals_mvp)
-            mvp = self.get_player_info(obj.mvp_href, pager)
+            mvp = self.get_player_info(obj.mvp_href)
             obj.mvp = self.safe_set_id(mvp)
-            dpoy = self.get_player_info(obj.dpoy_href, pager)
+            dpoy = self.get_player_info(obj.dpoy_href)
             obj.dpoy = self.safe_set_id(dpoy)
-            mip = self.get_player_info(obj.mip_href, pager)
+            mip = self.get_player_info(obj.mip_href)
             obj.mip = self.safe_set_id(mip)
-            sixmoty = self.get_player_info(obj.sixmoty_href, pager)
+            sixmoty = self.get_player_info(obj.sixmoty_href)
             obj.sixmoty = self.safe_set_id(sixmoty)
-            roty = self.get_player_info(obj.roty_href, pager)
+            roty = self.get_player_info(obj.roty_href)
             obj.roty = self.safe_set_id(roty)
             obj.refresh_output()
 
-            games = [self.get_game_data(x, pager) for x in obj.schedule]
+            games = [self.get_game_data(x) for x in obj.schedule]
 
         elif issubclass(obj.__class__, game_info):
-            home = self.get_team_info(obj.home_team_href, pager)
+            home = self.get_team_info(obj.home_team_href)
             obj.home_team_id = self.safe_set_id(home)
-            away = self.get_team_info(obj.away_team_href, pager)
+            away = self.get_team_info(obj.away_team_href)
             obj.away_team_id = self.safe_set_id(away)
-            refs = [self.get_referee_info(x, pager) for x in obj.referee_hrefs]
+            refs = [self.get_referee_info(x) for x in obj.referee_hrefs]
             ref_ids = [self.safe_set_id(x) for x in refs]
             obj.referee_ids = ref_ids
             obj.refresh_output()
 
         elif issubclass(obj.__class__, game_data):
-            self.link_game_data(obj.team_data, pager)
-            self.link_game_data(obj.player_data, pager)
-            self.link_game_data(obj.team_data_quarters, pager)
-            self.link_game_data(obj.player_data_quarters, pager)
+            self.link_game_data(obj.team_data)
+            self.link_game_data(obj.player_data)
+            self.link_game_data(obj.team_data_quarters)
+            self.link_game_data(obj.player_data_quarters)
 
     @abstractmethod
-    def referee_info(self, href, pager) -> referee_info:
+    def referee_info(self, href) -> referee_info:
         pass
 
     @empty_href_wrap
-    def get_referee_info(self, href, pager):
-        info = self.referee_info(href, pager)
+    def get_referee_info(self, href):
+        info = self.referee_info(href)
         if not info.href in self.referee_id_cache.keys():
             info.fetch(self.referee_max_id)
             self.referee_id_cache.update({info.href: info.id})
@@ -991,12 +1003,12 @@ class engine(debug):
         return info
 
     @abstractmethod
-    def executive_info(self, href, pager) -> executive_info:
+    def executive_info(self, href) -> executive_info:
         pass
 
     @empty_href_wrap
-    def get_executive_info(self, href, pager):
-        info = self.executive_info(href, pager)
+    def get_executive_info(self, href):
+        info = self.executive_info(href)
         if not info.href in self.executive_id_cache.keys():
             info.fetch(self.executive_max_id)
             self.executive_id_cache.update({info.href: info.id})
@@ -1005,12 +1017,12 @@ class engine(debug):
         return info
 
     @abstractmethod
-    def coach_info(self, href, pager) -> coach_info:
+    def coach_info(self, href) -> coach_info:
         pass
 
     @empty_href_wrap
-    def get_coach_info(self, href, pager):
-        info = self.coach_info(href, pager)
+    def get_coach_info(self, href):
+        info = self.coach_info(href)
         if not info.href in self.coach_id_cache.keys():
             info.fetch(self.coach_max_id)
             self.coach_id_cache.update({info.href: info.id})
@@ -1019,12 +1031,12 @@ class engine(debug):
         return info
 
     @abstractmethod
-    def player_info(self, href, pager) -> player_info:
+    def player_info(self, href) -> player_info:
         pass
 
     @empty_href_wrap
-    def get_player_info(self, href, pager):
-        info = self.player_info(href, pager)
+    def get_player_info(self, href):
+        info = self.player_info(href)
         if not info.href in self.player_id_cache.keys():
             info.fetch(self.player_max_id)
             self.player_id_cache.update({info.href: info.id})
@@ -1033,59 +1045,59 @@ class engine(debug):
         return info
 
     @abstractmethod
-    def team_info(self, href, pager) -> team_info:
+    def team_info(self, href) -> team_info:
         pass
 
     @empty_href_wrap
-    def get_team_info(self, href, pager):
-        info = self.team_info(href, pager)
+    def get_team_info(self, href):
+        info = self.team_info(href)
         if not info.href in self.team_id_cache.keys():
             info.fetch(self.team_max_id)
             self.team_id_cache.update({info.href: info.id})
             self.team_max_id += 1
-            self.get_links(info, pager)
+            self.get_links(info)
             self.save(info.output, 'team_info')
         return info
 
     @abstractmethod
-    def season_info(self, href, pager) -> season_info:
+    def season_info(self, href) -> season_info:
         pass
 
     @empty_href_wrap
-    def get_season_info(self, href, pager):
-        info = self.season_info(href, pager)
+    def get_season_info(self, href):
+        info = self.season_info(href)
         if not info.href in self.season_id_cache.keys():
             info.fetch()
             self.season_id_cache.update({info.href: info.season})
             self.rankings.update(info.rankings)
-            self.get_links(info, pager)
+            self.get_links(info)
             self.save(info.output, 'season_info')
         return info
 
     @abstractmethod
-    def game_info(self, href, pager) -> game_info:
+    def game_info(self, href) -> game_info:
         pass
 
     @empty_href_wrap
-    def get_game_info(self, href, pager):
-        info = self.game_info(href, pager)
+    def get_game_info(self, href):
+        info = self.game_info(href)
         if not info.href in self.game_id_cache.keys():
             info.fetch(self.game_max_id)
             self.game_id_cache.update({info.href: info.id})
             self.game_max_id += 1
-            self.get_links(info, pager)
+            self.get_links(info)
             self.save(info.output, 'game_info')
         return info
 
     @abstractmethod
-    def game_data(self, href, pager) -> game_data:
+    def game_data(self, href) -> game_data:
         pass
 
     @empty_href_wrap
-    def get_game_data(self, href, pager):
-        info = self.game_data(href, pager)
+    def get_game_data(self, href):
+        info = self.game_data(href)
         info.fetch()
-        self.get_links(info, pager)
+        self.get_links(info)
         self.save(info.team_data, 'team_data')
         self.save(info.player_data, 'player_data')
         self.save(info.team_data_quarters, 'team_data_quarters')

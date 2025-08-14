@@ -1,14 +1,10 @@
 import time
 import requests
 from bs4 import BeautifulSoup
-from debug import debug
+from ..debug import debug
+from .abstract import pager
 
-class page:
-
-    def __init__(self, cache_size):
-        self.cache_size = cache_size
-
-    base_url = 'https://basketball-reference.com'
+class page(pager):
     last_time = 0
     wait_time = 4
     cache = {}

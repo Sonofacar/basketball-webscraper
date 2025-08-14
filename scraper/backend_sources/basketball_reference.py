@@ -2,7 +2,7 @@ import re
 from bs4 import BeautifulSoup, Comment
 
 from . import abstract
-from debug import debug
+from ..debug import debug
 
 class referee_info(abstract.referee_info):
     @debug.error_wrap('referee_info', 'name', str)
@@ -630,26 +630,26 @@ class game_data(abstract.game_data):
         self.get_tables()
 
 class BasketballReferenceEngine(abstract.engine):
-    def referee_info(self, href, pager) -> referee_info:
-        return referee_info(href, pager, self.referee_id_cache)
+    def referee_info(self, href) -> referee_info:
+        return referee_info(href, self.pager, self.referee_id_cache)
 
-    def executive_info(self, href, pager) -> executive_info:
-        return executive_info(href, pager, self.executive_id_cache)
+    def executive_info(self, href) -> executive_info:
+        return executive_info(href, self.pager, self.executive_id_cache)
 
-    def coach_info(self, href, pager) -> coach_info:
-        return coach_info(href, pager, self.coach_id_cache)
+    def coach_info(self, href) -> coach_info:
+        return coach_info(href, self.pager, self.coach_id_cache)
 
-    def player_info(self, href, pager) -> player_info:
-        return player_info(href, pager, self.player_id_cache)
+    def player_info(self, href) -> player_info:
+        return player_info(href, self.pager, self.player_id_cache)
 
-    def team_info(self, href, pager) -> team_info:
-        return team_info(href, pager, self.team_id_cache)
+    def team_info(self, href) -> team_info:
+        return team_info(href, self.pager, self.team_id_cache)
 
-    def season_info(self, href, pager) -> season_info:
-        return season_info(href, pager, self.season_id_cache)
+    def season_info(self, href) -> season_info:
+        return season_info(href, self.pager, self.season_id_cache)
 
-    def game_info(self, href, pager) -> game_info:
-        return game_info(href, pager, self.game_id_cache)
+    def game_info(self, href) -> game_info:
+        return game_info(href, self.pager, self.game_id_cache)
 
-    def game_data(self, href, pager) -> game_data:
-        return game_data(href, pager)
+    def game_data(self, href) -> game_data:
+        return game_data(href, self.pager)
