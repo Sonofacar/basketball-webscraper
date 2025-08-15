@@ -13,8 +13,8 @@ setup(
     entry_points = {
         "console_scripts": [
             "bballInitializeDB = scripts.initialize_db:main",
-        #     "bball_scrape_yearly = scrape_yearly.py:main",
-        #     "bball_scrape_daily = scrape_daily.py:main",
+            "bballScrapeYearly = scripts.scrape_yearly.py:main",
+        #     "bball_scrape_daily = scripts.scrape_daily.py:main",
         ],
     },
     # entry_points={
