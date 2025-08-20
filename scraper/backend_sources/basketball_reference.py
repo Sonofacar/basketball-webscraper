@@ -630,6 +630,41 @@ class game_data(abstract.game_data):
         self.get_tables()
 
 class BasketballReferenceEngine(abstract.engine):
+    def __init__(self, pager, database):
+        super().__init__(pager, database)
+        self._source = "basketball_reference"
+
+    def get_id_cache(self):
+        con = self.database.give_connection()
+        cur = con.cursor()
+
+        cols = ["basketball_reference", "value"]
+        locations = [("referee_info", self.referee_id_cache), 
+                     ("executive_info", self.executive_id_cache),
+                     ("coach_info", self.coach_id_cache),
+                     ("player_info", self.player_id_cache),
+                     ("team_info", self.team_id_cache),
+                     ("season_info", self.season_id_cache),
+                     ("game_info", self.game_id_cache),
+                     ("game_data", self.game_data_cache),
+                     ("rankings", self.rankings)]
+
+        for location, cache in locations:
+            query = f"SELECT {','.join(cols)} FROM id_cache WHERE type = '{location}'"
+            tmp = cur.execute(query)
+            from_cache = {href: value for href, value in cur.fetchall()}
+            cache.update(from_cache)
+
+        cur.close()
+        con.close()
+
+        self.referee_max_id = max([0] + list(self.referee_id_cache.values()))
+        self.executive_max_id = max([0] + list(self.executive_id_cache.values()))
+        self.coach_max_id = max([0] + list(self.coach_id_cache.values()))
+        self.player_max_id = max([0] + list(self.player_id_cache.values()))
+        self.team_max_id = max([0] + list(self.team_id_cache.values()))
+        self.game_max_id = max([0] + list(self.game_id_cache.values()))
+
     def referee_info(self, href) -> referee_info:
         return referee_info(href, self.pager, self.referee_id_cache)
 

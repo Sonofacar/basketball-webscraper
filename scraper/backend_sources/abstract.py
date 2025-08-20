@@ -874,6 +874,7 @@ class engine(debug):
     def __init__(self, pager, database):
         self.pager = pager
         self.database = database
+        self._source = ""
 
     referee_max_id = 0
     executive_max_id = 0
@@ -888,7 +889,23 @@ class engine(debug):
     team_id_cache = {}
     season_id_cache = {}
     game_id_cache = {}
+    game_data_cache = {}
     rankings = {}
+
+    @abstractmethod
+    def get_id_cache(self):
+        pass
+
+    @property
+    def source(self):
+        return self._source
+
+    def update_id_cache(self, href, ID, cache, location):
+        id_data = {self.source: [href],
+                   "value": [ID],
+                   "type": [location]}
+        self.database.save_data(id_data, "id_cache")
+        cache.update({href: ID})
 
     @staticmethod
     def safe_set_id(obj):
@@ -898,7 +915,7 @@ class engine(debug):
             return obj.id
 
     def link_game_data(self, table):
-        tmp = [self.get_game_info(x) for x in table['Game_ID']]
+        tmp = [self.get_team_info(x) for x in table['Game_ID']]
         ids = [self.safe_set_id(x) for x in tmp]
         table.update({'Game_ID': ids})
 
@@ -966,10 +983,13 @@ class engine(debug):
     @empty_href_wrap
     def get_referee_info(self, href):
         info = self.referee_info(href)
-        if not info.href in self.referee_id_cache.keys():
+        if not href in self.referee_id_cache.keys():
             info.fetch(self.referee_max_id)
-            self.referee_id_cache.update({info.href: info.id})
             self.referee_max_id += 1
+            self.update_id_cache(href,
+                                 info.id,
+                                 self.referee_id_cache,
+                                 "referee_info")
             self.database.save_data(info.output, 'referee_info')
         return info
 
@@ -980,10 +1000,13 @@ class engine(debug):
     @empty_href_wrap
     def get_executive_info(self, href):
         info = self.executive_info(href)
-        if not info.href in self.executive_id_cache.keys():
+        if not href in self.executive_id_cache.keys():
             info.fetch(self.executive_max_id)
-            self.executive_id_cache.update({info.href: info.id})
             self.executive_max_id += 1
+            self.update_id_cache(href,
+                                 info.id,
+                                 self.executive_id_cache,
+                                 "executive_info")
             self.database.save_data(info.output, 'executive_info')
         return info
 
@@ -994,10 +1017,13 @@ class engine(debug):
     @empty_href_wrap
     def get_coach_info(self, href):
         info = self.coach_info(href)
-        if not info.href in self.coach_id_cache.keys():
+        if not href in self.coach_id_cache.keys():
             info.fetch(self.coach_max_id)
-            self.coach_id_cache.update({info.href: info.id})
             self.coach_max_id += 1
+            self.update_id_cache(href,
+                                 info.id,
+                                 self.coach_id_cache,
+                                 "coach_info")
             self.database.save_data(info.output, 'coach_info')
         return info
 
@@ -1008,10 +1034,13 @@ class engine(debug):
     @empty_href_wrap
     def get_player_info(self, href):
         info = self.player_info(href)
-        if not info.href in self.player_id_cache.keys():
+        if not href in self.player_id_cache.keys():
             info.fetch(self.player_max_id)
-            self.player_id_cache.update({info.href: info.id})
             self.player_max_id += 1
+            self.update_id_cache(href,
+                                 info.id,
+                                 self.player_id_cache,
+                                 "player_info")
             self.database.save_data(info.output, 'player_info')
         return info
 
@@ -1022,11 +1051,14 @@ class engine(debug):
     @empty_href_wrap
     def get_team_info(self, href):
         info = self.team_info(href)
-        if not info.href in self.team_id_cache.keys():
+        if not href in self.team_id_cache.keys():
             info.fetch(self.team_max_id)
-            self.team_id_cache.update({info.href: info.id})
             self.team_max_id += 1
             self.get_links(info)
+            self.update_id_cache(href,
+                                 info.id,
+                                 self.team_id_cache,
+                                 "team_info")
             self.database.save_data(info.output, 'team_info')
         return info
 
@@ -1037,11 +1069,16 @@ class engine(debug):
     @empty_href_wrap
     def get_season_info(self, href):
         info = self.season_info(href)
-        if not info.href in self.season_id_cache.keys():
+        if not href in self.season_id_cache.keys():
             info.fetch()
-            self.season_id_cache.update({info.href: info.season})
             self.rankings.update(info.rankings)
+            for key, value in info.rankings.items():
+                self.update_id_cache(key, value, self.rankings, "rakings")
             self.get_links(info)
+            self.update_id_cache(href,
+                                 info.season,
+                                 self.season_id_cache,
+                                 "season_info")
             self.database.save_data(info.output, 'season_info')
         return info
 
@@ -1052,11 +1089,14 @@ class engine(debug):
     @empty_href_wrap
     def get_game_info(self, href):
         info = self.game_info(href)
-        if not info.href in self.game_id_cache.keys():
+        if not href in self.game_id_cache.keys():
             info.fetch(self.game_max_id)
-            self.game_id_cache.update({info.href: info.id})
             self.game_max_id += 1
             self.get_links(info)
+            self.update_id_cache(href,
+                                 info.id,
+                                 self.game_id_cache,
+                                 "game_info")
             self.database.save_data(info.output, 'game_info')
         return info
 
@@ -1067,10 +1107,15 @@ class engine(debug):
     @empty_href_wrap
     def get_game_data(self, href):
         info = self.game_data(href)
-        info.fetch()
-        self.get_links(info)
-        self.database.save_data(info.team_data, 'team_games')
-        self.database.save_data(info.player_data, 'player_games')
-        self.database.save_data(info.team_data_quarters, 'team_quarters')
-        self.database.save_data(info.player_data_quarters, 'player_quarters')
+        if self.game_data_cache.get(href, 0) != 1:
+            info.fetch()
+            self.get_links(info)
+            self.database.save_data(info.team_data, 'team_games')
+            self.database.save_data(info.player_data, 'player_games')
+            self.database.save_data(info.team_data_quarters, 'team_quarters')
+            self.database.save_data(info.player_data_quarters, 'player_quarters')
+            self.update_id_cache(href,
+                                 1,
+                                 self.game_data_cache,
+                                 "game_data")
         return info
