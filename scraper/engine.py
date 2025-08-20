@@ -41,4 +41,7 @@ def make_engine(name: str, pager: str, database, db_location = None, cache_size 
     # Database defaults to sqlite
     db_engine = dbEngines.get(database.lower(), sqlite)
 
-    return engine_class(page_engine(cache_size, url), db_engine(db_location))
+    engine = engine_class(page_engine(cache_size, url), db_engine(db_location))
+    engine.get_id_cache()
+
+    return engine
