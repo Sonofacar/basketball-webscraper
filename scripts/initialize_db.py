@@ -249,6 +249,15 @@ Teams TEXT,
 Coach_ID INTEGER NOT NULL PRIMARY KEY
 );"""
 
+id_cache = """CREATE TABLE IF NOT EXISTS id_cache(
+basketball_reference TEXT,
+nba TEXT,
+espn TEXT,
+value INTEGER NOT NULL,
+type TEXT,
+CONSTRAINT unique_ids UNIQUE (basketball_reference,nba,espn,type)
+);"""
+
 # Execute Commands
 def main():
     db.execute(game_info)
@@ -262,6 +271,7 @@ def main():
     db.execute(referee_info)
     db.execute(executive_info)
     db.execute(coach_info)
+    db.execute(id_cache)
 
 if __name__ == "__main__":
     main()
