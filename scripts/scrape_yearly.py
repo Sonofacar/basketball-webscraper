@@ -37,7 +37,6 @@ parser.add_argument("-s",
 years_help = "A set of seasons, denoted by the year they end in, to scrape data from."
 parser.add_argument("years",
                     nargs = "*",
-                    # required = True,
                     type = int,
                     help = years_help)
 args = parser.parse_args(sys.argv[1:])
@@ -46,13 +45,13 @@ years = args.years
 engine = scraper.make_engine(args.site, args.client, args.db, args.location)
 
 if args.site == "basketball reference":
-    hrefs = ["/leagues/NBA_" + x + ".html" for x in years]
+    hrefs = ["/leagues/NBA_" + str(x) + ".html" for x in years]
 else:
     hrefs = []
 
 def main():
     for href in hrefs:
-        tmp = engine.get_season_info(hrefs)
+        tmp = engine.get_season_info(href)
 
 if __name__ == "__main__":
     main()
