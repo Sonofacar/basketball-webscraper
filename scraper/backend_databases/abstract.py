@@ -23,3 +23,7 @@ class database(ABC):
     @abstractmethod
     def execute(self, command):
         pass
+
+    @abstractmethod
+    def give_connection(self):
+        pass
