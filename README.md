@@ -5,9 +5,9 @@ A python package of a modular webscraper for NBA basketball data.
 The package is built to be able to switch data sources, databases, and web clients.
 Here is a list of what's supported:
 - Sources:
-	- [X] [Basketball-Reference](www.basketball-reference.com)
-	- [ ] [NBA](www.nba.com)
-	- [ ] [ESPN](www.espn.com)
+	- [X] [Basketball-Reference](https://www.basketball-reference.com)
+	- [ ] [NBA](https://www.nba.com)
+	- [ ] [ESPN](https://www.espn.com)
 - Databases:
 	- [X] SQLite
 	- [ ] MySQL/MariaDB
