@@ -915,7 +915,7 @@ class engine(debug):
             return obj.id
 
     def link_game_data(self, table):
-        tmp = [self.get_team_info(x) for x in table['Game_ID']]
+        tmp = [self.get_game_info(x) for x in table['Game_ID']]
         ids = [self.safe_set_id(x) for x in tmp]
         table.update({'Game_ID': ids})
 
