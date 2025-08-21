@@ -413,8 +413,8 @@ class game_data(abstract.game_data):
                 case 'mp':
                     try:
                         t = row_soup.find('td', {'data-stat': stat}).text
-                        m = int(t.split(':')[0])
-                        s = int(t.split(':')[1])
+                        m = abs(int(t.split(':')[0]))
+                        s = abs(int(t.split(':')[1]))
                         output[key] = [60*m + s]
                     except AttributeError:
                         # Sometimes needed for a player that didn't play
@@ -423,7 +423,7 @@ class game_data(abstract.game_data):
                         # Needed for whole minute times
                         t = row_soup.find('td', {'data-stat': stat}).text
                         m = int(t)
-                        output[key] = [60*m]
+                        output[key] = [abs(60*m)]
 
                 case 'plus_minus':
                     try:
@@ -434,7 +434,8 @@ class game_data(abstract.game_data):
 
                 case _:
                     try:
-                        output[key] = [int(row_soup.find('td', {'data-stat': stat}).text)]
+                        t = row_soup.find('td', {'data-stat': stat}).text
+                        output[key] = [abs(int(t))]
                     except:
                         output[key] = [0]
 
