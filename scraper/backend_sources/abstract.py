@@ -830,22 +830,25 @@ class game_info(debug):
         self.refresh_output()
 
 class game_data(debug):
-    def __init__(self, href, pager):
-        self.soup = pager.get(href)
+    def __init__(self, href, pager, id_cache):
         self.href = href
-        self._injured = {}
-        self._home_team_href = None
-        self._home_abbrev = None
-        self._away_team_href = None
-        self._away_abbrev = None
-        self._game_href = None
-        self._season = None
-        self._player_data = None
-        self._player_data_quarters = None
-        self._team_data = None
-        self._team_data_quarters = None
-        self._home_win = None
-        self._fetched = False
+        if href in id_cache.keys():
+            self._fetched = True
+        else: 
+            self.soup = pager.get(href)
+            self._injured = {}
+            self._home_team_href = None
+            self._home_abbrev = None
+            self._away_team_href = None
+            self._away_abbrev = None
+            self._game_href = None
+            self._season = None
+            self._player_data = None
+            self._player_data_quarters = None
+            self._team_data = None
+            self._team_data_quarters = None
+            self._home_win = None
+            self._fetched = False
 
     @abstractmethod
     def _fetch(self):
