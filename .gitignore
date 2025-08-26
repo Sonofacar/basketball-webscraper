@@ -3,3 +3,8 @@ dist/*
 output/*
 *.egg-info
 venv/*
+*_db
+*.db
+*.sql
+*.sqlite3
+*.sqlite
