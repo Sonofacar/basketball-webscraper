@@ -17,7 +17,7 @@ Here is a list of what's supported:
 	- [ ] SwarmScrape (Another project of mine which obscures bot traffic)
 
 TODO:
-- [ ] Change Two pointers to Field goals
+- [X] Change Two pointers to Field goals
 - [ ] Add daily scrape script
 - [ ] Decide what to do about injured players (include or not)
 - [ ] Match IDs from various sources
