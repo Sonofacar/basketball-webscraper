@@ -390,7 +390,6 @@ class game_data(abstract.game_data):
                 'PM': [],
                 'Win': [],
                 'Home': [],
-                'Injured': [],
                 'Player_ID': [],
                 'Game_ID': [],
                 'Season': [],
@@ -494,7 +493,6 @@ class game_data(abstract.game_data):
         for row in table_soup.find_all('tr'):
             if not self.injury_check(row, t_href):
                 parsed = self.parse_row(row)
-                parsed['Injured'] = [False]
 
                 if t_href == self._home_team_href:
                     parsed['Win'] = [self._home_win]
@@ -523,7 +521,6 @@ class game_data(abstract.game_data):
         players = table.copy()
         team = table.copy()
         del team['PM']
-        del team['Injured']
         del team['Player_ID']
 
         if 'whole' in table['Quarter']:
@@ -612,7 +609,6 @@ class game_data(abstract.game_data):
 
         team_data = clean_table.copy()
         del team_data['PM']
-        del team_data['Injured']
         del team_data['Player_ID']
         self._team_data_quarters = team_data.copy()
         del team_data['Quarter']

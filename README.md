@@ -19,7 +19,8 @@ Here is a list of what's supported:
 TODO:
 - [X] Change Two pointers to Field goals
 - [ ] Add daily scrape script
-- [ ] Decide what to do about injured players (include or not)
+- [X] Decide what to do about injured players (include or not)
+    - Not included
 - [ ] Match IDs from various sources
 - [ ] Implement alternate sources, databases, and web clients:
 	- [ ] NBA source
