@@ -153,8 +153,6 @@ Draft_Position INTEGER DEFAULT 0,
 Draft_Team TEXT,
 Draft_Year INTEGER DEFAULT 0,
 Debut_Date TEXT,
-Career_Seasons INTEGER DEFAULT 0,
-Teams TEXT,
 Player_ID INTEGER NOT NULL PRIMARY KEY
 );"""
 
@@ -251,7 +249,6 @@ Referee_ID INTEGER NOT NULL PRIMARY KEY
 executive_info = """CREATE TABLE IF NOT EXISTS executive_info(
 Name TEXT,
 Birthday TEXT,
-Teams TEXT,
 Executive_ID INTEGER NOT NULL PRIMARY KEY
 );"""
 
@@ -260,7 +257,6 @@ Name TEXT,
 Birthday TEXT,
 Wins INTEGER NOT NULL CHECK (Wins >= 0),
 Losses INTEGER NOT NULL CHECK (Losses >= 0),
-Teams TEXT,
 Coach_ID INTEGER NOT NULL PRIMARY KEY
 );"""
 

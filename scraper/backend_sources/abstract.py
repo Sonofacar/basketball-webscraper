@@ -140,7 +140,6 @@ class executive_info(debug):
         self._fetched = True
         self._output = {'Name': [self.name if self.name is not None else ''],
                         'Birthday': [self.birthday if self.birthday is not None else ''],
-                        'Teams': [self.teams if self.teams is not None else ''],
                         'Executive_ID': [self.id if self.id is not None else 0]}
 
 class coach_info(debug):
@@ -212,7 +211,6 @@ class coach_info(debug):
                         'Birthday': [self.birthday if self.birthday is not None else ''],
                         'Wins': [self.wins if self.wins is not None else 0],
                         'Losses': [self.losses if self.losses is not None else 0],
-                        'Teams': [self.teams if self.teams is not None else ''],
                         'Coach_ID': [self.id if self.id is not None else 0]}
 
 class player_info(debug):
@@ -330,8 +328,6 @@ class player_info(debug):
                         'Draft_Team': [DT if DT is not None else ''],
                         'Draft_Year': [DY if DY is not None else 0],
                         'Debut_Date': [DD if DD is not None else ''],
-                        'Career_Seasons': [CS if CS is not None else 0],
-                        'Teams': [self.teams if self.teams is not None else ''],
                         'Player_ID': [self.id if self.id is not None else 0]}
 
 class team_info(debug):

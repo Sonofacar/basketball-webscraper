@@ -52,15 +52,9 @@ class executive_info(abstract.executive_info):
         birthday_raw = birthday_raw.replace('Born: ', '').split(' in ')[0]
         self._birthday = birthday_raw.replace('Born:\n', '').replace('\n', '').replace('   ', '')
 
-    @debug.error_wrap('executive_info', 'teams', str)
-    def get_teams(self):
-        teams = [x.text for x in self.soup.select('tbody th+ .left') if x.text != 'TOT']
-        self._teams = ','.join(list(set(teams)))
-
     def _fetch(self):
         self.get_name()
         self.get_birthday()
-        self.get_teams()
 
 class coach_info(abstract.coach_info):
     @debug.error_wrap('coach_info', 'name', str)
@@ -81,17 +75,11 @@ class coach_info(abstract.coach_info):
     def get_losses(self):
         self._losses = int(self.soup.select('.thead .right:nth-child(7)')[0].text)
 
-    @debug.error_wrap('coach_info', 'teams', str)
-    def get_teams(self):
-        teams = [x.text for x in self.soup.select('.right+ .left a') if x.text != 'TOT']
-        self._teams = ','.join(list(set(teams)))
-
     def _fetch(self):
         self.get_name()
         self.get_birthday()
         self.get_wins()
         self.get_losses()
-        self.get_teams()
 
 class player_info(abstract.player_info):
     @debug.error_wrap('player_info', 'header', None, info = 'This may affect the shoots, birthday, draft, debut, college, and highschool fields.')
@@ -139,22 +127,9 @@ class player_info(abstract.player_info):
     def get_name(self):
         self._name = self.soup.select('h1 span')[0].text
 
-    @debug.error_wrap('player_info', 'career_seasons', str)
-    def get_career_seasons(self):
-        ages = self.soup.select('#per_game .full_table th+ .center')
-        self._career_seasons = len(ages)
-
-    @debug.error_wrap('player_info', 'teams', str)
-    def get_teams(self):
-        teams_raw = self.soup.find('table', {'id': 'per_game_stats'}).find_all('td', {'data-stat': 'team_name_abbr'})
-        teams = [x.text for x in teams_raw if x.text not in ['TOT', '2TM']]
-        self._teams = ','.join(list(set(teams)))
-
     def _fetch(self):
         self.get_header()
         self.get_name()
-        self.get_career_seasons()
-        self.get_teams()
 
 class team_info(abstract.team_info):
     def __init__(self, href, pager, id_cache):
