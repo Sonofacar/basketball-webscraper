@@ -463,7 +463,18 @@ class game_data(abstract.game_data):
         except:
             return False
 
-        if isinstance(reason, type(None)):
+        # If the player did not play, it should be treated as if they are injured
+        try:
+            seconds = row_soup.find('td', {'data-stat': 'mp'}).text
+        except:
+            seconds = "Error getting text attribute"
+        finally:
+            not_blank_seconds = seconds != ""
+            not_zero_seconds = seconds != "0:00"
+
+        if not_blank_seconds and not_zero_seconds and isinstance(reason, type(None)):
+            # If the minutes field is not blank/zero and there is no reason, the
+            # player must have played.
             return False
         else:
             self._injured[t_href].append(row_soup.find('a').attrs['href'])
