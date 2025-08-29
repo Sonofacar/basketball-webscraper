@@ -47,7 +47,7 @@ dbEngines = {
         # 'postgresql': postgresql,
 }
 
-def make_engine(name: str, pager: str, database, db_location = None, cache_size = 100):
+def make_engine(name: str, pager: str, database, db_location = None, cache_size = 10):
     # Backend Engine defaults to Basketball-reference
     engine_class = sourceEngines.get(name.lower(), BasketballReferenceEngine)
 
