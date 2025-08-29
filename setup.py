@@ -40,7 +40,7 @@ setup(
     #     ],
     # },
 
-    install_requires = ["bs4", "requests"],
+    install_requires = ["bs4", "requests", "lxml"],
 
     classifiers = [
         "Programming Language :: Python :: 3",
