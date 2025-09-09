@@ -944,8 +944,11 @@ class engine(debug):
         table.update({'Opponent_ID': ids})
 
         if 'Player_ID' in table.keys():
-            tmp = [self.get_player_info(x) for x in table['Player_ID']]
-            ids = [self.safe_set_id(x) for x in tmp]
+            ids = []
+            for player_href in table['Player_ID']:
+                tmp = self.get_player_info(player_href)
+                ids.append(self.safe_set_id(tmp))
+
             table.update({'Player_ID': ids})
 
     def get_links(self, obj):
@@ -974,7 +977,19 @@ class engine(debug):
             obj.roty = self.safe_set_id(roty)
             obj.refresh_output()
 
-            games = [self.get_game_data(x) for x in obj.schedule]
+            # Ensure these objects don't stay in memory for the entire season
+            champion = None
+            finals_mvp = None
+            mvp = None
+            dpoy = None
+            mip = None
+            sixmoty = None
+            roty = None
+
+            # Now get every game
+            for game_href in obj.schedule:
+                game = self.get_game_data(game_href)
+                game = None
 
         elif issubclass(obj.__class__, game_info):
             home = self.get_team_info(obj.home_team_href)
