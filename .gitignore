@@ -1,6 +1,7 @@
 *__pycache__*
 dist/*
 output/*
+build/*
 *.egg-info
 venv/*
 *_db
