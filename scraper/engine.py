@@ -22,7 +22,7 @@ from .backend_sources.basketball_reference import BasketballReferenceEngine
 from .backend_pagers.page_cacher import page
 
 from .backend_databases.sqlite import sqlite
-# from .backend_databases.mysql import mysql
+from .backend_databases.mysql import mysql
 # from .backend_databases.postgresql import postgresql
 
 sourceEngines = {
@@ -43,7 +43,7 @@ pagerEngines = {
 
 dbEngines = {
         'sqlite': sqlite,
-        # 'mysql': mysql,
+        'mysql': mysql,
         # 'postgresql': postgresql,
 }
 

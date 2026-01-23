@@ -40,7 +40,7 @@ setup(
     #     ],
     # },
 
-    install_requires = ["bs4", "requests", "lxml"],
+    install_requires = ["bs4", "requests", "lxml", "mariadb"],
 
     classifiers = [
         "Programming Language :: Python :: 3",
