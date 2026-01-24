@@ -40,7 +40,12 @@ setup(
     #     ],
     # },
 
-    install_requires = ["bs4", "requests", "lxml", "mariadb"],
+    install_requires = ["bs4", "requests", "lxml"],
+
+    extras_require = {
+        "MySQL": ["mariadb"],
+        "PostgreSQL": ["pg"],
+    },
 
     classifiers = [
         "Programming Language :: Python :: 3",

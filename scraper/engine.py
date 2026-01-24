@@ -23,7 +23,7 @@ from .backend_pagers.page_cacher import page
 
 from .backend_databases.sqlite import sqlite
 from .backend_databases.mysql import mysql
-# from .backend_databases.postgresql import postgresql
+from .backend_databases.postgresql import postgresql
 
 sourceEngines = {
         'basketball reference': BasketballReferenceEngine,
@@ -44,7 +44,7 @@ pagerEngines = {
 dbEngines = {
         'sqlite': sqlite,
         'mysql': mysql,
-        # 'postgresql': postgresql,
+        'postgresql': postgresql,
 }
 
 def make_engine(name: str, pager: str, database, db_location = None, cache_size = 10):
