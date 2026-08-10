@@ -23,5 +23,5 @@ class pager(ABC):
         self.base_url = base_url
 
     @abstractmethod
-    def get(self, href, cache = True):
+    def get(self, href, cache = True, base_url = None):
         pass

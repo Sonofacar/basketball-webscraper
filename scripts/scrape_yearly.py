@@ -48,7 +48,7 @@ site_help = "The website to request from."
 parser.add_argument("-s",
                     "--site",
                     default = "basketball reference",
-                    choices = ["basketball reference"],
+                    choices = ["basketball reference", "nba"],
                     # choices = ["basketball reference", "espn", "nba"],
                     help = client_help)
 years_help = "A set of seasons, denoted by the year they end in, to scrape data from."
@@ -63,6 +63,8 @@ engine = scraper.make_engine(args.site, args.client, args.db, args.location)
 
 if args.site == "basketball reference":
     hrefs = ["/leagues/NBA_" + str(x) + ".html" for x in years]
+elif args.site == "nba":
+    hrefs = ["/stats/teams/boxscores?Season=" + str(x - 1) + "-" + str(x)[2:] for x in years]
 else:
     hrefs = []
 

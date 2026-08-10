@@ -40,7 +40,7 @@ setup(
     #     ],
     # },
 
-    install_requires = ["bs4", "requests", "lxml"],
+    install_requires = ["bs4", "requests", "lxml", "curl_cffi"],
 
     extras_require = {
         "MySQL": ["mariadb"],

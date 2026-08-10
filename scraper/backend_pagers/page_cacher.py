@@ -49,7 +49,7 @@ class page(pager):
     agent_index = 0
 
     def redo_for_scorebox(self, href, soup):
-        if 'boxscores' in href:
+        if '/boxscores/' in href:
             x = soup.find('div', {'class': 'scorebox'})
             if x is None:
                 return True
@@ -86,8 +86,10 @@ class page(pager):
         else:
             return False
 
-    def get(self, href, cache = True):
-        url = self.base_url + href
+    def get(self, href, cache = True, base_url = None):
+        if base_url is None:
+            base_url = self.base_url
+        url = base_url + href
 
         cache_status = 'Not found'
 
@@ -104,12 +106,12 @@ class page(pager):
                    'Accept-Encoding': 'gzip, deflate, br',
                    'Connection': 'keep-alive',
                    'Cookie': 'sr_note_box_countdown=47; srcssfull=yes; is_live=true; usprivacy=1NYN; sr_n=1%7CTue%2C%2026%20Mar%202024%2001%3A44%3A59%20GMT; __cf_bm=9.msJrpwm.xXzhQ1.FXyR_WXTKfxOEj3CehtphfekQo-1711435471-1.0.1.1-Af53Ht0BQKLpw7Ez_.W2SwU6g4JteYQobP5O9iqig3bMCz7Ss3C7QJx4gVMaEB_MnoioonwsKWY3QWTC2SdkQQ',
-                   'Upgrade-Insecure-Requests': 1,
+                   'Upgrade-Insecure-Requests': '1',
                    'Sec-Fetch-Dest': 'document',
                    'Sec-Fetch-Mode': 'navigate',
                    'Sec-Fetch-Site': 'cross-site',
-                   'DNT': 1,
-                   'Sec-GPC': 1}
+                   'DNT': '1',
+                   'Sec-GPC': '1'}
         self.agent_index += 1
 
         if self.agent_index == len(self.user_agents):
@@ -121,7 +123,7 @@ class page(pager):
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-        page = requests.get(url)
+        page = requests.get(url, headers = headers)
         page.encoding = page.apparent_encoding
         soup = BeautifulSoup(page.text, features="lxml")
         self.last_time = time.time()
@@ -131,7 +133,7 @@ class page(pager):
         # Sometimes boxscore pages don't get requested correctly
         if self.redo_for_scorebox(href, soup):
             debug.debug(' Request  ', 'Found an error on boxscore page; new request:\t' + href)
-            return self.get(new_href, cache)
+            return self.get(href, cache)
 
         # Sometimes we get a refresh page
         if self.needs_refresh(soup):
@@ -143,7 +145,7 @@ class page(pager):
         # Just try again before we make a decision
         if not page.ok:
             time.sleep(20)
-            page = requests.get(url)
+            page = requests.get(url, headers = headers)
 
         # We probably are blocked
         if page.status_code >= 400:
@@ -151,7 +153,7 @@ class page(pager):
                         'Requests: Probably too many requests, will be in jail until an hour after ' + time_string + '. Will keep trying intermitently.')
             while not page.ok:
                 time.sleep(60)
-                page = requests.get(url)
+                page = requests.get(url, headers = headers)
 
             soup = BeautifulSoup(page.text, features="lxml")
 

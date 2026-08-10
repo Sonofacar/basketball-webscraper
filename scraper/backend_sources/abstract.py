@@ -466,6 +466,7 @@ class team_info(debug):
 class season_info(debug):
     def __init__(self, href, pager, id_cache):
         self.href = href
+        self.pager = pager
         if href in id_cache.keys():
             self._season = id_cache[href]
             self._fetched = True
@@ -828,6 +829,7 @@ class game_info(debug):
 class game_data(debug):
     def __init__(self, href, pager, id_cache):
         self.href = href
+        self.pager = pager
         if href in id_cache.keys():
             self._fetched = True
         else: 
@@ -1104,7 +1106,7 @@ class engine(debug):
             info.fetch()
             self.rankings.update(info.rankings)
             for key, value in info.rankings.items():
-                self.update_id_cache(key, value, self.rankings, "rakings")
+                self.update_id_cache(key, value, self.rankings, "rankings")
             self.get_links(info)
             self.update_id_cache(href,
                                  info.season,
