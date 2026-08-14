@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from .abstract import database, pass_none_location
-import mariadb
+import mysql
 
 class mysql(database):
     def __init__(self, user, password, database, host, port = 3306):
