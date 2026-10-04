@@ -17,10 +17,11 @@
 
 from .backend_sources.basketball_reference import BasketballReferenceEngine
 from .backend_sources.nba import NBAEngine
-#from .backend_sources.espn import ESPNEngine
+from .backend_sources.espn import ESPNEngine
 
 from .backend_pagers.page_cacher import page
 from .backend_pagers.nba_page import nba_page
+from .backend_pagers.espn_page import espn_page
 
 from .backend_databases.sqlite import sqlite
 #from .backend_databases.mysql import mysql
@@ -29,18 +30,19 @@ from .backend_databases.sqlite import sqlite
 sourceEngines = {
         'basketball reference': BasketballReferenceEngine,
         'nba': NBAEngine,
-        # 'espn': ESPNEngine,
+        'espn': ESPNEngine,
 }
 
 baseURLs = {
         'basketball reference': "https://www.basketball-reference.com",
         'nba': "https://www.nba.com",
-        # 'espn': "https://www.espn.com",
+        'espn': "https://site.api.espn.com",
 }
 
 pagerEngines = {
         'native': page,
         'nba': nba_page,
+        'espn': espn_page,
 }
 
 dbEngines = {
@@ -54,9 +56,10 @@ def make_engine(name: str, pager: str, database, db_location = None, cache_size 
     engine_class = sourceEngines.get(name.lower(), BasketballReferenceEngine)
     url = baseURLs.get(name.lower(), "https://www.basketball-reference.com")
 
-    # The NBA source requires the curl_cffi pager to reach stats.nba.com
-    if engine_class is NBAEngine:
-        page_engine = pagerEngines['nba']
+    # The NBA and ESPN sources require the curl_cffi pager: the NBA one to
+    # reach stats.nba.com, the ESPN one to impersonate a browser TLS profile.
+    if engine_class in (NBAEngine, ESPNEngine):
+        page_engine = pagerEngines[name.lower()]
     else:
         page_engine = pagerEngines.get(pager.lower(), page)
 

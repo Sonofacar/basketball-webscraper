@@ -42,14 +42,13 @@ client_help = "The client software used to make requests from the website."
 parser.add_argument("-c",
                     "--client",
                     default = "native",
-                    choices = ["native"],
+                    choices = ["native", "nba", "espn"],
                     help = client_help)
 site_help = "The website to request from."
 parser.add_argument("-s",
                     "--site",
                     default = "basketball reference",
-                    choices = ["basketball reference", "nba"],
-                    # choices = ["basketball reference", "espn", "nba"],
+                    choices = ["basketball reference", "nba", "espn"],
                     help = client_help)
 years_help = "A set of seasons, denoted by the year they end in, to scrape data from."
 parser.add_argument("years",
@@ -65,6 +64,10 @@ if args.site == "basketball reference":
     hrefs = ["/leagues/NBA_" + str(x) + ".html" for x in years]
 elif args.site == "nba":
     hrefs = ["/stats/teams/boxscores?Season=" + str(x - 1) + "-" + str(x)[2:] for x in years]
+elif args.site == "espn":
+    # ESPN has no season landing page; the year is the only thing the source
+    # needs, and it reads the schedule and standings from the JSON APIs.
+    hrefs = ["/espn/season/" + str(x) for x in years]
 else:
     hrefs = []
 
