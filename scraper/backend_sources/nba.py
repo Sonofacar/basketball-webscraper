@@ -109,7 +109,10 @@ class _QuarterTotals:
         return bool(self._order)
 
 
-def _get_boxscore(pager, game_id, range_type=0, start_period=1, end_period=10):
+def _get_boxscore(pager, game_id, range_type=0, start_period=1, end_period=14):
+    # end_period defaults past any plausible game length so a long overtime
+    # game can't be truncated by the URL; verified that raising it does not
+    # change the RangeType=0 response.
     href = (
         "/stats/boxscoretraditionalv2"
         "?EndPeriod=%d&EndRange=28800&GameID=%s"
@@ -708,13 +711,33 @@ class game_data(abstract.game_data):
         # A failed period is logged and skipped so one bad request can't silently
         # truncate the remaining quarters. Each period also feeds the whole-game
         # accumulators below, which cost nothing extra to fill.
+        #
+        # num_periods comes from the game page's own period breakdown (which also
+        # carries periodType, so OVERTIME periods are counted) and is cross-checked
+        # against the page's own "period" field. It is deliberately uncapped: any
+        # ceiling here would silently truncate a long overtime game, and since the
+        # whole-game sums are derived from this loop a truncated loop yields
+        # under-counted totals that look real.
         num_periods = len(home_team.get("periods", []))
+        reported_periods = game.get("period")
+        if reported_periods and reported_periods != num_periods:
+            debug.debug("game_data",
+                        "game %s reports period=%s but carries %d period "
+                        "entries; trusting the period list"
+                        % (game_id, reported_periods, num_periods))
         if num_periods == 0:
             num_periods = 4
+            debug.debug("game_data",
+                        "game %s carries no period breakdown; assuming the "
+                        "standard 4 periods" % game_id)
+        if num_periods > 4:
+            debug.debug("game_data",
+                        "game %s went to overtime: %d periods"
+                        % (game_id, num_periods))
         player_totals = _QuarterTotals()
         team_totals = _QuarterTotals()
         missing_periods = []
-        for period in range(1, min(num_periods, 10) + 1):
+        for period in range(1, num_periods + 1):
             period_boxscore = _get_boxscore(
                 self.pager, game_id, range_type=1,
                 start_period=period, end_period=period,
@@ -746,20 +769,39 @@ class game_data(abstract.game_data):
         # with empty resultSets for many games, which would leave player_games
         # and team_games completely empty. The per-quarter rows are already in
         # hand, so sum them rather than issuing another request.
+        #
+        # The sum is only trustworthy when every period was fetched. If any
+        # period failed, the totals would be under-counted but look complete, so
+        # leave the whole-game tables empty instead and say so — an absent row is
+        # recoverable, a plausible-looking wrong one is not.
+        complete = not missing_periods
         player_columns = [c for c in self.initialize_table() if c != "Quarter"]
         team_columns = [c for c in player_columns if c not in ("PM", "Player_ID")]
         summed = []
+        skipped = []
         if not player_data["Points"] and player_totals:
-            player_data = player_totals.table(player_columns)
-            summed.append("player_games")
+            if complete:
+                player_data = player_totals.table(player_columns)
+                summed.append("player_games")
+            else:
+                skipped.append("player_games")
         if not team_data["Points"] and team_totals:
-            team_data = team_totals.table(team_columns)
-            summed.append("team_games")
+            if complete:
+                team_data = team_totals.table(team_columns)
+                summed.append("team_games")
+            else:
+                skipped.append("team_games")
         if summed:
             debug.debug("game_data",
                         "whole-game boxscore empty for game %s; summed the "
                         "per-quarter rows instead for %s"
                         % (game_id, " and ".join(summed)))
+        if skipped:
+            debug.debug("game_data",
+                        "not writing whole-game rows for %s of game %s: the "
+                        "RangeType=0 boxscore was empty and periods %s are "
+                        "missing, so a sum would under-count"
+                        % (", ".join(skipped), game_id, missing_periods))
 
         # Whole-game tables omit the Quarter column; per-quarter tables keep it.
         # pop rather than del so a table rebuilt from the quarter accumulators
