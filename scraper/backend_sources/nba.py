@@ -600,7 +600,9 @@ class game_data(abstract.game_data):
                 "Assists": _stat(row_dict, "AST"),
                 "Steals": _stat(row_dict, "STL"),
                 "Blocks": _stat(row_dict, "BLK"),
-                "Turnovers": _stat(row_dict, "TOV"),
+                # stats.nba.com spells turnovers "TO"; there is no "TOV"
+                # column, so reading the wrong name silently yields 0.
+                "Turnovers": _stat(row_dict, "TO"),
                 "Fouls": _stat(row_dict, "PF"),
                 "Points": _stat(row_dict, "PTS"),
                 "PM": _stat(row_dict, "PLUS_MINUS"),
@@ -650,7 +652,9 @@ class game_data(abstract.game_data):
                 "Assists": _stat(row_dict, "AST"),
                 "Steals": _stat(row_dict, "STL"),
                 "Blocks": _stat(row_dict, "BLK"),
-                "Turnovers": _stat(row_dict, "TOV"),
+                # stats.nba.com spells turnovers "TO"; there is no "TOV"
+                # column, so reading the wrong name silently yields 0.
+                "Turnovers": _stat(row_dict, "TO"),
                 "Fouls": _stat(row_dict, "PF"),
                 "Points": _stat(row_dict, "PTS"),
                 "Win": home_win if team_id == home_href else not home_win,
