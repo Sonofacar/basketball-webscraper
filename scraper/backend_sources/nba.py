@@ -35,6 +35,80 @@ def _stat(row_dict, key):
     return value if value is not None else 0
 
 
+# Columns that add up when per-quarter boxscore rows are folded into a
+# whole-game row. Every other column on a parsed row (Win/Home/Season/
+# Game_ID/Player_ID/Team_ID/Opponent_ID) is constant for a given player or
+# team within one game, so it is carried straight from the last quarter that
+# saw that key. Season is a number but must never be summed.
+_ADDITIVE_COLUMNS = frozenset({
+    "Seconds",
+    "Threes",
+    "Three_Attempts",
+    "Field_Goals",
+    "Field_Goal_Attempts",
+    "Freethrows",
+    "Freethrow_Attempts",
+    "Offensive_Rebounds",
+    "Defensive_Rebounds",
+    "Assists",
+    "Steals",
+    "Blocks",
+    "Turnovers",
+    "Fouls",
+    "Points",
+    "PM",
+})
+
+
+class _QuarterTotals:
+    """Fold per-quarter boxscore rows into whole-game rows.
+
+    stats.nba.com's whole-game boxscore (RangeType=0) now returns empty
+    resultSets for many games while the per-quarter (RangeType=1) responses
+    are still populated, which would leave player_games/team_games with no
+    rows at all. A crawl already fetches every period, so the whole-game rows
+    can be recovered by summing them without issuing an extra request.
+
+    Rows are keyed by player (or team) href and emitted in first-seen order,
+    so a player who appears in only some quarters still yields exactly one
+    row holding only the quarters they actually played.
+    """
+
+    def __init__(self):
+        self._rows = {}
+        self._order = []
+
+    def add(self, key_column, parsed_row):
+        key = parsed_row.get(key_column)
+        if not key:
+            return
+        entry = self._rows.get(key)
+        if entry is None:
+            entry = self._rows[key] = {}
+            self._order.append(key)
+        for column, value in parsed_row.items():
+            if column in _ADDITIVE_COLUMNS:
+                entry[column] = entry.get(column, 0) + value
+            else:
+                entry[column] = value
+
+    def table(self, columns):
+        """Materialize as a column-oriented dict of equal-length lists.
+
+        Every column gets exactly one entry per accumulated row so the zipped
+        rows in sqlite.save_data can't be truncated by a short list.
+        """
+        output = {column: [] for column in columns}
+        for key in self._order:
+            entry = self._rows[key]
+            for column in columns:
+                output[column].append(entry.get(column, 0))
+        return output
+
+    def __bool__(self):
+        return bool(self._order)
+
+
 def _get_boxscore(pager, game_id, range_type=0, start_period=1, end_period=10):
     href = (
         "/stats/boxscoretraditionalv2"
@@ -492,7 +566,8 @@ class game_data(abstract.game_data):
         }
 
     def _add_player_rows(self, target, rows, headers, home_team, away_team,
-                         home_href, away_href, home_win, season, period):
+                         home_href, away_href, home_win, season, period,
+                         totals=None):
         for row in rows:
             row_dict = dict(zip(headers, row))
             person_id = row_dict.get("PLAYER_ID", "")
@@ -511,33 +586,40 @@ class game_data(abstract.game_data):
             except (ValueError, IndexError):
                 secs = 0
 
-            target["Quarter"].append(period)
-            target["Seconds"].append(secs)
-            target["Threes"].append(_stat(row_dict, "FG3M"))
-            target["Three_Attempts"].append(_stat(row_dict, "FG3A"))
-            target["Field_Goals"].append(_stat(row_dict, "FGM"))
-            target["Field_Goal_Attempts"].append(_stat(row_dict, "FGA"))
-            target["Freethrows"].append(_stat(row_dict, "FTM"))
-            target["Freethrow_Attempts"].append(_stat(row_dict, "FTA"))
-            target["Offensive_Rebounds"].append(_stat(row_dict, "OREB"))
-            target["Defensive_Rebounds"].append(_stat(row_dict, "DREB"))
-            target["Assists"].append(_stat(row_dict, "AST"))
-            target["Steals"].append(_stat(row_dict, "STL"))
-            target["Blocks"].append(_stat(row_dict, "BLK"))
-            target["Turnovers"].append(_stat(row_dict, "TOV"))
-            target["Fouls"].append(_stat(row_dict, "PF"))
-            target["Points"].append(_stat(row_dict, "PTS"))
-            target["PM"].append(_stat(row_dict, "PLUS_MINUS"))
-            target["Win"].append(home_win if team_id == home_href else not home_win)
-            target["Home"].append(team_id == home_href)
-            target["Player_ID"].append(player_href)
-            target["Game_ID"].append(self.href)
-            target["Season"].append(season)
-            target["Team_ID"].append(team_id)
-            target["Opponent_ID"].append(opp_href)
+            parsed = {
+                "Quarter": period,
+                "Seconds": secs,
+                "Threes": _stat(row_dict, "FG3M"),
+                "Three_Attempts": _stat(row_dict, "FG3A"),
+                "Field_Goals": _stat(row_dict, "FGM"),
+                "Field_Goal_Attempts": _stat(row_dict, "FGA"),
+                "Freethrows": _stat(row_dict, "FTM"),
+                "Freethrow_Attempts": _stat(row_dict, "FTA"),
+                "Offensive_Rebounds": _stat(row_dict, "OREB"),
+                "Defensive_Rebounds": _stat(row_dict, "DREB"),
+                "Assists": _stat(row_dict, "AST"),
+                "Steals": _stat(row_dict, "STL"),
+                "Blocks": _stat(row_dict, "BLK"),
+                "Turnovers": _stat(row_dict, "TOV"),
+                "Fouls": _stat(row_dict, "PF"),
+                "Points": _stat(row_dict, "PTS"),
+                "PM": _stat(row_dict, "PLUS_MINUS"),
+                "Win": home_win if team_id == home_href else not home_win,
+                "Home": team_id == home_href,
+                "Player_ID": player_href,
+                "Game_ID": self.href,
+                "Season": season,
+                "Team_ID": team_id,
+                "Opponent_ID": opp_href,
+            }
+            for column, value in parsed.items():
+                target[column].append(value)
+            if totals is not None:
+                totals.add("Player_ID", parsed)
 
     def _add_team_rows(self, target, rows, headers, home_team, away_team,
-                       home_href, away_href, home_win, season, period):
+                       home_href, away_href, home_win, season, period,
+                       totals=None):
         for row in rows:
             row_dict = dict(zip(headers, row))
             team_id = (
@@ -554,28 +636,34 @@ class game_data(abstract.game_data):
             except (ValueError, IndexError):
                 secs = 0
 
-            target["Quarter"].append(period)
-            target["Seconds"].append(secs)
-            target["Threes"].append(_stat(row_dict, "FG3M"))
-            target["Three_Attempts"].append(_stat(row_dict, "FG3A"))
-            target["Field_Goals"].append(_stat(row_dict, "FGM"))
-            target["Field_Goal_Attempts"].append(_stat(row_dict, "FGA"))
-            target["Freethrows"].append(_stat(row_dict, "FTM"))
-            target["Freethrow_Attempts"].append(_stat(row_dict, "FTA"))
-            target["Offensive_Rebounds"].append(_stat(row_dict, "OREB"))
-            target["Defensive_Rebounds"].append(_stat(row_dict, "DREB"))
-            target["Assists"].append(_stat(row_dict, "AST"))
-            target["Steals"].append(_stat(row_dict, "STL"))
-            target["Blocks"].append(_stat(row_dict, "BLK"))
-            target["Turnovers"].append(_stat(row_dict, "TOV"))
-            target["Fouls"].append(_stat(row_dict, "PF"))
-            target["Points"].append(_stat(row_dict, "PTS"))
-            target["Win"].append(home_win if team_id == home_href else not home_win)
-            target["Home"].append(team_id == home_href)
-            target["Team_ID"].append(team_id)
-            target["Opponent_ID"].append(opp_href)
-            target["Game_ID"].append(self.href)
-            target["Season"].append(season)
+            parsed = {
+                "Quarter": period,
+                "Seconds": secs,
+                "Threes": _stat(row_dict, "FG3M"),
+                "Three_Attempts": _stat(row_dict, "FG3A"),
+                "Field_Goals": _stat(row_dict, "FGM"),
+                "Field_Goal_Attempts": _stat(row_dict, "FGA"),
+                "Freethrows": _stat(row_dict, "FTM"),
+                "Freethrow_Attempts": _stat(row_dict, "FTA"),
+                "Offensive_Rebounds": _stat(row_dict, "OREB"),
+                "Defensive_Rebounds": _stat(row_dict, "DREB"),
+                "Assists": _stat(row_dict, "AST"),
+                "Steals": _stat(row_dict, "STL"),
+                "Blocks": _stat(row_dict, "BLK"),
+                "Turnovers": _stat(row_dict, "TOV"),
+                "Fouls": _stat(row_dict, "PF"),
+                "Points": _stat(row_dict, "PTS"),
+                "Win": home_win if team_id == home_href else not home_win,
+                "Home": team_id == home_href,
+                "Team_ID": team_id,
+                "Opponent_ID": opp_href,
+                "Game_ID": self.href,
+                "Season": season,
+            }
+            for column, value in parsed.items():
+                target[column].append(value)
+            if totals is not None:
+                totals.add("Team_ID", parsed)
 
     def _fetch(self):
         game = self.soup.get("props", {}).get("pageProps", {}).get("game", {})
@@ -614,12 +702,15 @@ class game_data(abstract.game_data):
 
         # Per-quarter data: one boxscore request per period played (RangeType=1).
         # A failed period is logged and skipped so one bad request can't silently
-        # truncate the remaining quarters.
+        # truncate the remaining quarters. Each period also feeds the whole-game
+        # accumulators below, which cost nothing extra to fill.
         num_periods = len(home_team.get("periods", []))
         if num_periods == 0:
             num_periods = 4
+        player_totals = _QuarterTotals()
+        team_totals = _QuarterTotals()
         missing_periods = []
-        for period in range(1, min(num_periods, 8) + 1):
+        for period in range(1, min(num_periods, 10) + 1):
             period_boxscore = _get_boxscore(
                 self.pager, game_id, range_type=1,
                 start_period=period, end_period=period,
@@ -635,19 +726,42 @@ class game_data(abstract.game_data):
                 if name == "PlayerStats" and rows:
                     self._add_player_rows(player_data_quarters, rows, headers,
                                           home_team, away_team, home_href,
-                                          away_href, home_win, season, period)
+                                          away_href, home_win, season, period,
+                                          totals=player_totals)
                 elif name == "TeamStats" and rows:
                     self._add_team_rows(team_data_quarters, rows, headers,
                                         home_team, away_team, home_href,
-                                        away_href, home_win, season, period)
+                                        away_href, home_win, season, period,
+                                        totals=team_totals)
         if missing_periods:
             debug.debug("game_data",
                         "missing per-quarter data for periods %s of game %s"
                         % (missing_periods, self.href))
 
-        # Whole-game tables omit the Quarter column; per-quarter tables keep it
-        del player_data["Quarter"]
-        del team_data["Quarter"]
+        # Whole-game fallback: stats.nba.com answers the RangeType=0 boxscore
+        # with empty resultSets for many games, which would leave player_games
+        # and team_games completely empty. The per-quarter rows are already in
+        # hand, so sum them rather than issuing another request.
+        player_columns = [c for c in self.initialize_table() if c != "Quarter"]
+        team_columns = [c for c in player_columns if c not in ("PM", "Player_ID")]
+        summed = []
+        if not player_data["Points"] and player_totals:
+            player_data = player_totals.table(player_columns)
+            summed.append("player_games")
+        if not team_data["Points"] and team_totals:
+            team_data = team_totals.table(team_columns)
+            summed.append("team_games")
+        if summed:
+            debug.debug("game_data",
+                        "whole-game boxscore empty for game %s; summed the "
+                        "per-quarter rows instead for %s"
+                        % (game_id, " and ".join(summed)))
+
+        # Whole-game tables omit the Quarter column; per-quarter tables keep it.
+        # pop rather than del so a table rebuilt from the quarter accumulators
+        # (which never had a Quarter column) doesn't raise.
+        player_data.pop("Quarter", None)
+        team_data.pop("Quarter", None)
         # team_games / team_quarters have no PM or Player_ID columns; drop them
         # so the column names match the table and zip doesn't truncate the rows
         team_data.pop("PM", None)
