@@ -19,6 +19,8 @@
 import scraper
 import argparse
 import sys
+import logging
+from scraper.debug import configure
 
 desc = "Initialize database for scraping basketball data."
 parser = argparse.ArgumentParser(prog = "bballInitializeDB",
@@ -38,7 +40,30 @@ parser.add_argument("-t",
                     choices = ["sqlite"],
                     # choices = ["sqlite", "mysql", "postgresql"],
                     help = type_help)
+quiet_help = "Quieter logs: -q keeps warnings and errors, -qq keeps errors only."
+parser.add_argument("-q",
+                    "--quiet",
+                    action = "count",
+                    default = 0,
+                    help = quiet_help)
+verbose_help = "Verbose logs: show per-row detail (cache hits, assumed values)."
+parser.add_argument("-v",
+                    "--verbose",
+                    action = "count",
+                    default = 0,
+                    help = verbose_help)
 args = parser.parse_args(sys.argv[1:])
+
+verbosity = args.verbose - args.quiet
+if verbosity >= 1:
+    log_level = logging.DEBUG
+elif verbosity == 0:
+    log_level = logging.INFO
+elif verbosity == -1:
+    log_level = logging.WARNING
+else:
+    log_level = logging.ERROR
+configure(log_level)
 
 db_engine = scraper.dbEngines.get(args.type, scraper.sqlite)
 db = db_engine(args.location)

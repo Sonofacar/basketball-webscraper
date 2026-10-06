@@ -17,7 +17,9 @@
 
 import time
 from .abstract import pager
-from ..debug import debug
+from ..debug import get_logger
+
+log = get_logger(__name__)
 
 # ESPN serves every endpoint as JSON, so unlike nba_page there is no
 # __NEXT_DATA__ / soup fallback to worry about and no per-host header logic.
@@ -81,7 +83,7 @@ class espn_page(pager):
         if cache:
             status, data = self.check_cache(href)
             if status:
-                debug.debug(" Request  ", "from cache: " + href)
+                log.info('from cache: %s', href)
                 return data
 
         current_time = time.time()
@@ -89,7 +91,7 @@ class espn_page(pager):
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-        debug.debug(" Request", time.strftime("%H:%M:%S") + " requesting " + href)
+        log.debug('requesting %s', href)
         t0 = time.time()
         # A missing or unusable response is an empty dict rather than an
         # exception, so one bad event cannot end a season-long crawl. Retries
@@ -101,10 +103,8 @@ class espn_page(pager):
             try:
                 resp = self._fetch(url)
             except Exception as e:
-                debug.debug(
-                    "  Error   ",
-                    "Request failed (attempt %d/%d): %s" % (attempt, self.RETRIES, e),
-                )
+                log.warning('Request failed (attempt %d/%d): %s',
+                            attempt, self.RETRIES, e)
             else:
                 if resp.status_code == 404:
                     status_text = "HTTP 404"
@@ -124,18 +124,19 @@ class espn_page(pager):
                     # 429 is the exception -- it means back off and try again.
                     status_text = "HTTP %s" % resp.status_code
                     break
-                debug.debug(
-                    "  Error   ",
-                    "HTTP %s (attempt %d/%d)"
-                    % (resp.status_code, attempt, self.RETRIES),
-                )
+                log.warning('HTTP %s (attempt %d/%d)',
+                            resp.status_code, attempt, self.RETRIES)
             if attempt < self.RETRIES:
                 time.sleep(self.RETRY_BACKOFF * attempt)
         self.last_time = time.time()
-        debug.debug(
-            " Request",
-            "done %s in %s (%s)" % (href, "%.1fs" % (time.time() - t0), status_text),
-        )
+        if status_text.startswith("HTTP 2"):
+            log.info('done %s in %s (%s)',
+                     href, "%.1fs" % (time.time() - t0), status_text)
+        else:
+            # A 404, a WAF 403, an undecodable body, or total failure all mean
+            # a data gap, so the crawl's gaps stay visible at default level.
+            log.warning('done %s in %s (%s)',
+                        href, "%.1fs" % (time.time() - t0), status_text)
 
         if cache:
             self.to_cache(href, data)

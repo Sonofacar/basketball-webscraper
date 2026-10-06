@@ -18,7 +18,9 @@
 import re
 
 from . import abstract
-from ..debug import debug
+from ..debug import assume, get_logger
+
+log = get_logger(__name__)
 
 _STATS_BASE_URL = "https://stats.nba.com"
 
@@ -30,7 +32,20 @@ _SEASON_STANDINGS = {}
 
 
 def _stat(row_dict, key):
-    """Coerce a boxscore stat to an int, defaulting None/missing to 0."""
+    """Coerce a boxscore stat to an int, defaulting None/missing to 0.
+
+    A present-but-None cell is normal basketball data (a player who never
+    tried a three) and stays silent. An absent header is not: every column
+    the source reads has been audited against the live stats.nba.com headers,
+    so a missing one almost certainly means the header was misspelled or
+    dropped, and silently coercing it to 0 would write a plausible-looking
+    wrong number with no trace. That case is reported.
+    """
+    if key not in row_dict:
+        assume("boxscore", key, 0,
+               "stats.nba.com row lacks the %r column" % key,
+               log=log)
+        return 0
     value = row_dict.get(key)
     return value if value is not None else 0
 
@@ -199,7 +214,6 @@ class coach_info(abstract.coach_info):
 
 
 class player_info(abstract.player_info):
-    @debug.error_wrap('player_info', 'shoots', str, default='R')
     def get_shoots(self):
         info = (
             self.soup.get("props", {})
@@ -209,13 +223,23 @@ class player_info(abstract.player_info):
         )
         hand = info.get("SHOOTING_HAND")
         if not hand:
-            raise KeyError("nba.com does not expose shooting-hand data")
+            # nba.com exposes no shooting-hand data, so every player defaults
+            # to right-handed. Reported as an assumption, not an error, and
+            # once per run at INFO: 347 ERROR lines for an expected absence
+            # made real failures invisible.
+            assume("player_info", "shoots", "R",
+                   "nba.com does not expose shooting-hand data",
+                   context=self.href, log=log)
+            return "R"
         normalized = str(hand).strip().lower()
         if normalized.startswith("r"):
             return "R"
         if normalized.startswith("l"):
             return "L"
-        raise KeyError("unrecognized shooting-hand data: %r" % (hand,))
+        assume("player_info", "shoots", "R",
+               "unrecognized shooting-hand data %r" % (hand,),
+               context=self.href, log=log)
+        return "R"
 
     def _fetch(self):
         self._shoots = self.get_shoots()
@@ -721,19 +745,18 @@ class game_data(abstract.game_data):
         num_periods = len(home_team.get("periods", []))
         reported_periods = game.get("period")
         if reported_periods and reported_periods != num_periods:
-            debug.debug("game_data",
-                        "game %s reports period=%s but carries %d period "
-                        "entries; trusting the period list"
-                        % (game_id, reported_periods, num_periods))
+            log.warning("game %s reports period=%s but carries %d period "
+                        "entries; trusting the period list",
+                        game_id, reported_periods, num_periods)
         if num_periods == 0:
             num_periods = 4
-            debug.debug("game_data",
-                        "game %s carries no period breakdown; assuming the "
-                        "standard 4 periods" % game_id)
+            assume("game_info", "periods", 4,
+                   "game page carries no period breakdown; assuming the "
+                   "standard 4",
+                   context=game_id, log=log)
         if num_periods > 4:
-            debug.debug("game_data",
-                        "game %s went to overtime: %d periods"
-                        % (game_id, num_periods))
+            log.info("game %s went to overtime: %d periods",
+                     game_id, num_periods)
         player_totals = _QuarterTotals()
         team_totals = _QuarterTotals()
         missing_periods = []
@@ -761,9 +784,8 @@ class game_data(abstract.game_data):
                                         away_href, home_win, season, period,
                                         totals=team_totals)
         if missing_periods:
-            debug.debug("game_data",
-                        "missing per-quarter data for periods %s of game %s"
-                        % (missing_periods, self.href))
+            log.warning("missing per-quarter data for periods %s of game %s",
+                        missing_periods, self.href)
 
         # Whole-game fallback: stats.nba.com answers the RangeType=0 boxscore
         # with empty resultSets for many games, which would leave player_games
@@ -792,16 +814,14 @@ class game_data(abstract.game_data):
             else:
                 skipped.append("team_games")
         if summed:
-            debug.debug("game_data",
-                        "whole-game boxscore empty for game %s; summed the "
-                        "per-quarter rows instead for %s"
-                        % (game_id, " and ".join(summed)))
+            log.info("whole-game boxscore empty for game %s; summed the "
+                     "per-quarter rows instead for %s",
+                     game_id, " and ".join(summed))
         if skipped:
-            debug.debug("game_data",
-                        "not writing whole-game rows for %s of game %s: the "
+            log.warning("not writing whole-game rows for %s of game %s: the "
                         "RangeType=0 boxscore was empty and periods %s are "
-                        "missing, so a sum would under-count"
-                        % (", ".join(skipped), game_id, missing_periods))
+                        "missing, so a sum would under-count",
+                        ", ".join(skipped), game_id, missing_periods)
 
         # Whole-game tables omit the Quarter column; per-quarter tables keep it.
         # pop rather than del so a table rebuilt from the quarter accumulators

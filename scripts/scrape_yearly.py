@@ -18,6 +18,8 @@
 import scraper
 import argparse
 import sys
+import logging
+from scraper.debug import configure
 
 desc = "Webscrape basketball data by year"
 parser = argparse.ArgumentParser(prog = "bballScrapeYearly",
@@ -55,7 +57,30 @@ parser.add_argument("years",
                     nargs = "*",
                     type = int,
                     help = years_help)
+quiet_help = "Quieter logs: -q keeps warnings and errors, -qq keeps errors only."
+parser.add_argument("-q",
+                    "--quiet",
+                    action = "count",
+                    default = 0,
+                    help = quiet_help)
+verbose_help = "Verbose logs: show per-row detail (cache hits, assumed values)."
+parser.add_argument("-v",
+                    "--verbose",
+                    action = "count",
+                    default = 0,
+                    help = verbose_help)
 args = parser.parse_args(sys.argv[1:])
+
+verbosity = args.verbose - args.quiet
+if verbosity >= 1:
+    log_level = logging.DEBUG
+elif verbosity == 0:
+    log_level = logging.INFO
+elif verbosity == -1:
+    log_level = logging.WARNING
+else:
+    log_level = logging.ERROR
+configure(log_level)
 
 years = args.years
 engine = scraper.make_engine(args.site, args.client, args.db, args.location)

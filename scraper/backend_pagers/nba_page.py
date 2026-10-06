@@ -19,7 +19,9 @@ import json
 import time
 from bs4 import BeautifulSoup
 from .abstract import pager
-from ..debug import debug
+from ..debug import get_logger
+
+log = get_logger(__name__)
 
 
 def _is_json_url(url):
@@ -84,7 +86,7 @@ class nba_page(pager):
         if cache:
             status, data = self.check_cache(href)
             if status:
-                debug.debug(" Request  ", "from cache: " + href)
+                log.info('from cache: %s', href)
                 return data
 
         current_time = time.time()
@@ -92,7 +94,7 @@ class nba_page(pager):
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-        debug.debug(' Request', time.strftime('%H:%M:%S') + ' requesting ' + href)
+        log.debug('requesting %s', href)
         t0 = time.time()
         resp = None
         for attempt in range(1, self.RETRIES + 1):
@@ -100,32 +102,29 @@ class nba_page(pager):
                 resp = self._fetch(url)
                 break
             except Exception as e:
-                debug.debug(
-                    "  Error   ",
-                    "Request failed (attempt %d/%d): %s" % (attempt, self.RETRIES, e),
-                )
+                log.warning('Request failed (attempt %d/%d): %s',
+                            attempt, self.RETRIES, e)
                 if attempt < self.RETRIES:
                     time.sleep(self.RETRY_BACKOFF * attempt)
         self.last_time = time.time()
         done = "%.1fs" % (time.time() - t0)
         if resp is None:
             data = {}
-            debug.debug(' Request', 'done %s in %s (HTTP no response)' % (href, done))
+            log.error('done %s in %s (no response after %d attempts)',
+                      href, done, self.RETRIES)
         elif resp.status_code == 404:
             data = {}
-            debug.debug(' Request', 'done %s in %s (HTTP 404)' % (href, done))
+            log.warning('done %s in %s (HTTP 404)', href, done)
         elif resp.status_code >= 400:
-            debug.debug(
-                "  Error   ",
-                "Requests: Probably too many requests, will keep trying intermittently.",
-            )
+            log.error('Requests: Probably too many requests, will keep trying '
+                      'intermittently.')
             while not resp.ok:
                 time.sleep(60)
                 resp = self._fetch(url)
 
             soup = BeautifulSoup(resp.text, features="lxml")
             data = self._extract_next_data(soup)
-            debug.debug(' Request', 'done %s in %s (HTTP %s)' % (href, done, resp.status_code))
+            log.info('done %s in %s (HTTP %s)', href, done, resp.status_code)
         else:
             is_json = _is_json_url(url)
             if is_json:
@@ -137,7 +136,7 @@ class nba_page(pager):
             else:
                 soup = BeautifulSoup(resp.text, features="lxml")
                 data = self._extract_next_data(soup)
-            debug.debug(' Request', 'done %s in %s (HTTP %s)' % (href, done, resp.status_code))
+            log.info('done %s in %s (HTTP %s)', href, done, resp.status_code)
 
         if cache:
             self.to_cache(href, data)

@@ -27,6 +27,8 @@ from .backend_databases.sqlite import sqlite
 #from .backend_databases.mysql import mysql
 #from .backend_databases.postgresql import postgresql
 
+from .debug import configure
+
 sourceEngines = {
         'basketball reference': BasketballReferenceEngine,
         'nba': NBAEngine,
@@ -52,6 +54,12 @@ dbEngines = {
 }
 
 def make_engine(name: str, pager: str, database, db_location = None, cache_size = 10):
+    # Make sure logging works before anything can try to log. Without a handler
+    # the logging module falls back to lastResort, which only emits WARNING and
+    # above, so a bare `import scraper` would silently lose every INFO line.
+    # configure() is idempotent and does not touch a level already chosen.
+    configure()
+
     # Backend Engine defaults to Basketball-reference
     engine_class = sourceEngines.get(name.lower(), BasketballReferenceEngine)
     url = baseURLs.get(name.lower(), "https://www.basketball-reference.com")

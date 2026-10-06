@@ -18,7 +18,9 @@
 import re
 
 from . import abstract
-from ..debug import debug
+from ..debug import assume, get_logger
+
+log = get_logger(__name__)
 
 # ESPN splits its data across three hosts. The source passes base_url= for
 # whichever one it needs, since the pager's own base_url only covers one.
@@ -86,10 +88,20 @@ _SEASON_COACHES = {}
 
 
 def _int(value, default=0):
-    """Coerce an ESPN stat string to an int, defaulting unparseable values."""
+    """Coerce an ESPN stat string to an int, defaulting unparseable values.
+
+    A missing or empty value is an ordinary absent cell and stays silent. A
+    string that cannot be parsed means ESPN changed the data shape, and every
+    number derived from that cell would silently be wrong, so it is reported.
+    """
     try:
         return int(str(value).strip())
     except (TypeError, ValueError):
+        if value is None or str(value).strip() == "":
+            return default
+        assume("espn stats", "int", default,
+               "could not parse %r as an integer" % (value,),
+               log=log)
         return default
 
 
@@ -257,7 +269,12 @@ class executive_info(abstract.executive_info):
     """ESPN publishes no executive profiles, so every field is a default."""
 
     def _fetch(self):
-        pass
+        # Every column in the executives table is a type default; say so once
+        # instead of writing a row of zeros with no trace.
+        assume("executive_info", "Executive_ID", 0,
+               "ESPN publishes no executive profiles, so every column stays "
+               "at its type default",
+               context=self.href, log=log)
 
 
 class coach_info(abstract.coach_info):
@@ -300,7 +317,12 @@ class coach_info(abstract.coach_info):
             if part
         )
         self._name = name or data.get("displayName") or ""
+        # ESPN has no date of birth for coaches, only a birth place, so the
+        # Birthday column is a silent-but-reported assumption.
         self._birthday = ""
+        assume("coach_info", "birthday", "",
+               "ESPN publishes no coach date of birth, only a birth place",
+               context=self.href, log=log)
 
         records = data.get("careerRecords") or []
         if records:
@@ -312,6 +334,10 @@ class coach_info(abstract.coach_info):
         else:
             self._wins = 0
             self._losses = 0
+            assume("coach_info", "wins", 0,
+                   "coach profile carries no career records, so Wins and "
+                   "Losses are 0",
+                   context=self.href, log=log)
 
 
 class player_info(abstract.player_info):
@@ -352,8 +378,13 @@ class player_info(abstract.player_info):
 
     def _fetch(self):
         # ESPN exposes no shooting-hand data, so default to right-handed to
-        # satisfy the Shoots column's CHECK constraint.
+        # satisfy the Shoots column's CHECK constraint. Reported rather than
+        # silent: every Shoots value in the database is assumed, and a whole
+        # season of them is one INFO line.
         self._shoots = "R"
+        assume("player_info", "shoots", "R",
+               "ESPN exposes no shooting-hand data",
+               context=self.href, log=log)
 
         data = self.soup
         self._name = data.get("fullName") or data.get("displayName") or ""
@@ -362,6 +393,9 @@ class player_info(abstract.player_info):
         college_ref = (data.get("college") or {}).get("$ref", "")
         self._college = 1 if college_ref else 0
         self._high_school = 0
+        assume("player_info", "high_school", 0,
+               "ESPN exposes no high school field",
+               context=self.href, log=log)
 
         draft = data.get("draft") or {}
         self._draft_year = _int(draft.get("year", 0))
@@ -374,6 +408,9 @@ class player_info(abstract.player_info):
         # experience entry, which is what the source is able to report.
         self._career_seasons = _int((data.get("experience") or {}).get("years", 0))
         self._debut_date = ""
+        assume("player_info", "debut_date", "",
+               "ESPN exposes no debut date",
+               context=self.href, log=log)
 
         team = (data.get("team") or {}).get("$ref", "")
         match = re.search(r"/teams/(\d+)", str(team))
@@ -578,13 +615,11 @@ class season_info(abstract.season_info):
         try:
             self._fetch_awards(season)
         except Exception as error:
-            debug.debug("season_info", "awards for %d failed: %s"
-                        % (season, error))
+            log.warning("awards for %d failed: %s", season, error)
         try:
             self._fetch_coaches(season, [row["team_id"] for row in rows])
         except Exception as error:
-            debug.debug("season_info", "coaches for %d failed: %s"
-                        % (season, error))
+            log.warning("coaches for %d failed: %s", season, error)
 
         awards = _SEASON_AWARDS.get(season, {})
         self._champion_href = awards.get("Champion")
@@ -613,8 +648,8 @@ class season_info(abstract.season_info):
                 base_url=_CORE_URL,
             ) or {}
             if record.get("name") != name:
-                debug.debug("season_info", "award %d is %r, expected %r"
-                            % (award_id, record.get("name"), name))
+                log.warning("award %d is %r, expected %r",
+                            award_id, record.get("name"), name)
                 continue
             winners = record.get("winners") or []
             if not winners:
@@ -741,6 +776,9 @@ class game_info(abstract.game_info):
         # carries only STATUS_FINAL, and boxscoreMinutes is just a boolean
         # flag saying minutes are present. Recorded as 0 rather than guessed.
         self._duration = 0
+        assume("game_info", "duration", 0,
+               "ESPN exposes no wall-clock game duration",
+               context=self.href, log=log)
 
         self._referee_hrefs = []
         for official in game_info.get("officials", []) or []:

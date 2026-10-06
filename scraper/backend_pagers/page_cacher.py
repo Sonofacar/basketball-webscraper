@@ -18,8 +18,10 @@
 import time
 import requests
 from bs4 import BeautifulSoup
-from ..debug import debug
+from ..debug import get_logger
 from .abstract import pager
+
+log = get_logger(__name__)
 
 class page(pager):
     last_time = 0
@@ -97,7 +99,7 @@ class page(pager):
             status, soup = self.check_cache(href)
         
         if cache and status:
-            debug.debug(' Request  ', 'from cache: ' + href)
+            log.info('from cache: %s', href)
             return soup
 
         headers = {'User-Agent': self.user_agents[self.agent_index],
@@ -128,18 +130,18 @@ class page(pager):
         soup = BeautifulSoup(page.text, features="lxml")
         self.last_time = time.time()
         time_string = time.strftime('%H:%M:%S', time.localtime(self.last_time))
-        debug.debug(' Request  ', time_string + '  requesting: ' + href)
+        log.info('requesting %s', href)
 
         # Sometimes boxscore pages don't get requested correctly
         if self.redo_for_scorebox(href, soup):
-            debug.debug(' Request  ', 'Found an error on boxscore page; new request:\t' + href)
+            log.error('Found an error on boxscore page; new request: %s', href)
             return self.get(href, cache)
 
         # Sometimes we get a refresh page
         if self.needs_refresh(soup):
             tag = soup.find('meta', {'http-equiv': 'refresh'})
             new_href = tag.attrs['content'].replace('1;URL=', '')
-            debug.debug(' Request  ', "Got a refresh response; new request:\t" + new_href)
+            log.warning('Got a refresh response; new request: %s', new_href)
             return self.get(new_href, cache)
 
         # Just try again before we make a decision
@@ -149,8 +151,9 @@ class page(pager):
 
         # We probably are blocked
         if page.status_code >= 400:
-            debug.debug('  Error   ',
-                        'Requests: Probably too many requests, will be in jail until an hour after ' + time_string + '. Will keep trying intermitently.')
+            log.error('Requests: Probably too many requests, will be in jail '
+                      'until an hour after %s. Will keep trying intermitently.',
+                      time_string)
             while not page.ok:
                 time.sleep(60)
                 page = requests.get(url, headers = headers)

@@ -16,6 +16,11 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import scraper
+from scraper.debug import configure
+
+# make_engine configures logging on its own, but do it explicitly so the
+# level is right for the whole REPL session.
+configure()
 engine = scraper.make_engine("basketball reference", "native", "sqlite")
 engine = scraper.make_engine("basketball reference", "native", "sqlite", "test.sql")
 
