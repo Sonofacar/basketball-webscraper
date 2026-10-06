@@ -142,8 +142,17 @@ def _team_href(team_id, season):
     return "/espn/team/%s/%s" % (team_id, season)
 
 
-def _player_href(athlete_id, season):
-    return "/espn/athlete/%s/%s" % (athlete_id, season)
+def _player_href(athlete_id):
+    """Build the ESPN player href. Deliberately season-less.
+
+    player_info has no Season column, so a player is one row for a career and
+    this href is pure identity: the id_cache keys off it, and a season in the
+    key would mint a fresh Player_ID for the same person every season, which
+    player_games.Player_ID then FKs to and silently breaks cross-season
+    aggregation. Only team hrefs are season-qualified, because team_info does
+    carry a Season column.
+    """
+    return "/espn/athlete/%s" % athlete_id
 
 
 def _slugify(name):
@@ -313,19 +322,18 @@ class player_info(abstract.player_info):
             self._id = id_cache[href]
             self._fetched = True
         else:
-            # href is "/espn/athlete/<athleteId>/<season>". The season is
-            # required: the unscoped core-api athlete resource resolves team
-            # and career data against the league's current season, so a
-            # historical scrape would get today's team instead of the team the
-            # player actually belonged to. It also makes player_info rows
-            # season-accurate, matching the season-qualified team hrefs.
+            # href is "/espn/athlete/<athleteId>" with no season: see
+            # _player_href. Every column player_info actually stores (name,
+            # birthday, college, draft) is fixed for a player's career, so the
+            # unscoped core-api resource is enough, and its team/experience
+            # fields are season-dependent but are not stored. Mirrors
+            # coach_info's "/coaches/<id>" request below.
             parts = _href_parts(href)
             athlete_id = parts[2] if len(parts) > 2 else ""
-            season = parts[3] if len(parts) > 3 else ""
             self.soup = {}
-            if athlete_id and season.isdigit():
+            if athlete_id.isdigit():
                 self.soup = pager.get(
-                    "/seasons/%s/athletes/%s" % (season, athlete_id),
+                    "/athletes/" + athlete_id,
                     base_url=_CORE_URL,
                 ) or {}
             self._shoots = None
@@ -616,7 +624,7 @@ class season_info(abstract.season_info):
                                 (winner.get("athlete") or {}).get("$ref", ""))
             if not athlete:
                 continue
-            awards[name] = _player_href(athlete.group(1), season)
+            awards[name] = _player_href(athlete.group(1))
             if name == "Finals MVP":
                 team = re.search(r"/teams/(\d+)",
                                  (winner.get("team") or {}).get("$ref", ""))
@@ -946,7 +954,7 @@ class game_data(abstract.game_data):
             target["Win"].append(
                 home_win if team_href == home_href else not home_win)
             target["Home"].append(team_href == home_href)
-            target["Player_ID"].append(_player_href(athlete_id, season))
+            target["Player_ID"].append(_player_href(athlete_id))
             target["Game_ID"].append(self.href)
             target["Season"].append(season)
             target["Team_ID"].append(team_href)
