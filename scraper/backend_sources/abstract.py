@@ -16,8 +16,10 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from abc import abstractmethod
-from ..debug import debug
+from ..debug import debug, get_logger
 from functools import wraps
+
+log = get_logger(__name__)
 
 def require_fetch(func):
     @wraps(func)

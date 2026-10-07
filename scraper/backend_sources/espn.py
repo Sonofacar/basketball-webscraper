@@ -1002,6 +1002,22 @@ class game_data(abstract.game_data):
         season, _, competition = _summary_season(self.soup)
         if not competition or season is None:
             return
+
+        # ESPN keeps postponed fixtures as events of their own with a full
+        # summary (teams, date, boxscore skeleton) but no game: status is
+        # STATUS_POSTPONED with completed=false and 0-0 scores. Writing them
+        # would produce a game_info row and two 0-point team_games rows for a
+        # game that never happened; the rescheduled game is a separate event.
+        # Deliberately fail-open: only an explicit false skips, so a payload
+        # that omits the field can never silently drop a finished game.
+        status = (competition.get("status") or {}).get("type") or {}
+        if status.get("completed") in (False, 0):
+            log.warning("skipping unfinished game %s: %s; not writing game data",
+                        self.href,
+                        status.get("detail") or status.get("name")
+                        or "not completed")
+            return
+
         home, away = _sides(competition)
         if not home or not away:
             return
