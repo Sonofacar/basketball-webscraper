@@ -17,9 +17,10 @@
 
 import re
 from bs4 import BeautifulSoup, Comment
+from datetime import datetime
 
 from . import abstract
-from ..debug import debug
+from ..debug import assume, debug
 
 class referee_info(abstract.referee_info):
     @debug.error_wrap('referee_info', 'name', str)
@@ -326,7 +327,16 @@ class game_info(abstract.game_info):
 
     @debug.error_wrap('game_info', 'date', str)
     def get_date(self):
-        self._date = re.split('[a-z], ', self.soup.title.text)[1].split(' | ')[0]
+        raw = re.split('[a-z], ', self.soup.title.text)[1].split(' | ')[0]
+        try:
+            # The title date is already Eastern (bbref prints Eastern times:
+            # "10:00 PM, October 22, 2024" for a 7 PM PT tip); only the
+            # format changes so every source stores the same ISO date.
+            self._date = datetime.strptime(raw, "%B %d, %Y").date().isoformat()
+        except ValueError:
+            assume('game_info', 'date', raw,
+                   'title date is not "Month D, YYYY"; keeping it unconverted')
+            self._date = raw
 
     @debug.error_wrap('game_info', 'location', str)
     def get_location(self):
@@ -334,7 +344,14 @@ class game_info(abstract.game_info):
 
     @debug.error_wrap('game_info', 'season', int)
     def get_season(self):
-        self._season = int(self.soup.select('u')[1].text.split('-')[0]) + 1
+        # Derived from the Eastern date get_date() just parsed (month >= 10
+        # starts a new season: 2023-10-25 -> 2024; 2024-04-15 -> 2024). The
+        # old implementation read select('u')[1] ("2023-24"), but bbref
+        # removed every <u> tag, so this always raised IndexError -> season=0
+        # -> CHECK violation -> the whole game_info row was silently dropped
+        # while id_cache still marked the game complete.
+        parsed = datetime.strptime(self._date, "%Y-%m-%d")
+        self._season = parsed.year + 1 if parsed.month >= 10 else parsed.year
 
     def _fetch(self):
         self.game_setup()

@@ -16,10 +16,42 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from abc import abstractmethod
-from ..debug import debug, get_logger
+from ..debug import assume, debug, get_logger
+from datetime import datetime, timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 log = get_logger(__name__)
+
+_EASTERN = ZoneInfo("America/New_York")
+
+
+def eastern_date(iso):
+    """The US-Eastern calendar date of an instant, as ISO YYYY-MM-DD.
+
+    Every source must store the same Eastern date for the same game, but
+    they publish times differently: ESPN gives a UTC instant
+    ("2024-11-13T00:00Z"), while NBA's gameCode and basketball-reference's
+    title date are already Eastern. This converts the instant form.
+    Returns "" for a missing value. A value that is not a parseable
+    instant keeps only its first 10 characters (today's behavior), reported
+    through assume so a source-side format change is visible at INFO once
+    instead of silently storing wrong dates.
+    """
+    if not iso:
+        return ""
+    try:
+        instant = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if instant.tzinfo is None:
+            # Offset-naive input would otherwise be interpreted in the
+            # *system* timezone; ESPN means UTC when it omits the offset.
+            instant = instant.replace(tzinfo=timezone.utc)
+        return instant.astimezone(_EASTERN).date().isoformat()
+    except (ValueError, TypeError):
+        assume("game_info", "date", str(iso),
+               "not a parseable instant; keeping the first 10 characters")
+        return str(iso)[:10]
+
 
 def require_fetch(func):
     @wraps(func)

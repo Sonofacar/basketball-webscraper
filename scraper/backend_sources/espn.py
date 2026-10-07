@@ -843,7 +843,10 @@ class game_info(abstract.game_info):
         (self._type, self._playoffs, self._in_season_tournament,
          self._play_in) = self._classify(season_type, event_id, note)
 
-        self._date = str(competition.get("date") or "")[:10]
+        # competition.date is a UTC instant; truncate via eastern_date so the
+        # stored date is the Eastern calendar date (the old raw [:10] kept the
+        # UTC date, which is +1 day for any game tipping at/after 7 PM EST).
+        self._date = abstract.eastern_date(competition.get("date"))
         self._season = season
 
     @property

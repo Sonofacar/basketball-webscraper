@@ -543,6 +543,10 @@ class game_info(abstract.game_info):
                 self._in_season_tournament = False
                 self._play_in = False
 
+        # gameCode's date prefix (e.g. "20241022") is the Eastern calendar
+        # date of the game -- verified against ESPN's UTC instants (evening
+        # games differ by exactly one day) -- so no timezone conversion is
+        # needed here, only the ISO reformat below.
         game_code = game.get("gameCode", "")
         parts = game_code.split("/")
         date_str = parts[0] if parts else ""
