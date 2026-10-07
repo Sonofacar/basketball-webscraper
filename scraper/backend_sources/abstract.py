@@ -1143,12 +1143,34 @@ class engine(debug):
         if self.game_data_cache.get(href, 0) != 1:
             info.fetch()
             self.get_links(info)
-            self.database.save_data(info.team_data, 'team_games')
-            self.database.save_data(info.player_data, 'player_games')
-            self.database.save_data(info.team_data_quarters, 'team_quarters')
-            self.database.save_data(info.player_data_quarters, 'player_quarters')
-            self.update_id_cache(href,
-                                 1,
-                                 self.game_data_cache,
-                                 "game_data")
+            def _has_data(table):
+                if not table:
+                    return False
+                for column, values in table.items():
+                    if values:
+                        return True
+                return False
+
+            saved_any = (_has_data(info.player_data) or
+                         _has_data(info.team_data) or
+                         _has_data(info.player_data_quarters) or
+                         _has_data(info.team_data_quarters))
+
+            if saved_any:
+                if _has_data(info.team_data):
+                    self.database.save_data(info.team_data, 'team_games')
+                if _has_data(info.player_data):
+                    self.database.save_data(info.player_data, 'player_games')
+                if _has_data(info.team_data_quarters):
+                    self.database.save_data(info.team_data_quarters, 'team_quarters')
+                if _has_data(info.player_data_quarters):
+                    self.database.save_data(info.player_data_quarters, 'player_quarters')
+                self.update_id_cache(href,
+                                     1,
+                                     self.game_data_cache,
+                                     "game_data")
+            else:
+                log.warning("no boxscore rows produced for %s; not marking "
+                            "game_data complete in id_cache (will retry on "
+                            "next run)", href)
         return info

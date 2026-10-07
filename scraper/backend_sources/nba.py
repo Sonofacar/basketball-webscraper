@@ -822,6 +822,11 @@ class game_data(abstract.game_data):
                         "RangeType=0 boxscore was empty and periods %s are "
                         "missing, so a sum would under-count",
                         ", ".join(skipped), game_id, missing_periods)
+        if not summed and not skipped and missing_periods and complete is False:
+            log.warning("not writing whole-game rows for game %s of %s: "
+                        "RangeType=0 boxscore was empty and all periods %s "
+                        "failed to return data; no totals produced",
+                        game_id, self.href, missing_periods)
 
         # Whole-game tables omit the Quarter column; per-quarter tables keep it.
         # pop rather than del so a table rebuilt from the quarter accumulators
@@ -835,11 +840,32 @@ class game_data(abstract.game_data):
         team_data_quarters.pop("PM", None)
         team_data_quarters.pop("Player_ID", None)
 
+        # Determine whether any real data was produced; do not allow
+        # downstream saving/marking complete if everything is empty.
+        def _has_data(table):
+            if not table:
+                return False
+            for column, values in table.items():
+                if values:
+                    return True
+            return False
+
         self._player_data = player_data
         self._player_data_quarters = player_data_quarters
         self._team_data = team_data
         self._team_data_quarters = team_data_quarters
         self._home_win = home_win
+        self._has_any_data = (_has_data(self._player_data) or
+                              _has_data(self._team_data) or
+                              _has_data(self._player_data_quarters) or
+                              _has_data(self._team_data_quarters))
+
+        if not self._has_any_data:
+            game_id_out = game_id or ""
+            log.warning("game_data produced no rows for %s (gameId=%s); "
+                        "missing_periods=%s, complete=%s; not persisting "
+                        "empty data",
+                        self.href, game_id_out, missing_periods, complete)
 
 
 class NBAEngine(abstract.engine):
