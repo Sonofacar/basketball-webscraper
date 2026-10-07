@@ -28,9 +28,11 @@ _CORE_URL = "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba"
 _SITE_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
 _STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/basketball/nba"
 
-# core-api enumerates a season's games by season type. There is no separate
-# type for the in-season tournament: its games sit inside the regular season
-# bucket and are identified by the neutralSite flag on the game itself.
+# core-api enumerates a season's games by season type. Neither the in-season
+# tournament nor the All-Star game has a type of its own: both sit inside the
+# regular season bucket. Each such game is identified by its summary header
+# gameNote instead ("NBA Cup ..." for the tournament, "NBA All-Star ..." for
+# the All-Star games, which are not scraped at all).
 _TYPE_REGULAR = 2
 _TYPE_PLAYOFFS = 3
 _TYPE_PLAY_IN = 5
@@ -148,6 +150,33 @@ def _summary_season(soup):
     if not year or not str(year).isdigit():
         year = _season_from_date(competition.get("date"))
     return year, season.get("type"), competition
+
+
+def _game_note(soup):
+    """The summary header's gameNote label, or "" for an ordinary game.
+
+    ESPN labels the games its season types cannot express: "NBA Cup - Group
+    Play"/"NBA Cup - Quarterfinals"/"NBA Cup - Semifinals"/"NBA Cup
+    Championship" for the in-season tournament, "NBA All-Star ..." for the
+    All-Star games, and one-off series names ("NBA Paris Games 2025", "NBA
+    Mexico City Game 2024") for games that are otherwise ordinary regular
+    season games.
+    """
+    header = soup.get("header", {}) or {}
+    return header.get("gameNote") or ""
+
+
+def _skip_reason(note):
+    """Why this event must not be scraped, or None to scrape it.
+
+    Deliberately fail-open: only a positive match on ESPN's own label
+    excludes an event, so a reworded gameNote degrades to the old behavior
+    (the game is scraped as a regular game) instead of silently dropping
+    real games.
+    """
+    if "NBA All-Star" in note:
+        return "All-Star game"
+    return None
 
 
 def _team_href(team_id, season):
@@ -725,14 +754,22 @@ class game_info(abstract.game_info):
             self._fetched = False
             self._type = "regular"
 
-    def _classify(self, competition, season_type, event_id):
-        """Set the game type from ESPN's own season type, then the neutral-site
-        flag for the in-season tournament.
+    def _classify(self, season_type, event_id, note):
+        """Set the game type from ESPN's own season type, then the gameNote
+        label for the in-season tournament.
 
         ESPN's summary header declares the season type outright (2 regular,
         3 playoffs, 5 play-in), so a game scraped on its own still classifies
         correctly. _EVENT_TYPE, filled in by season_info for the games in a
         season crawl, is only a fallback.
+
+        There is no in-season tournament season type: those games sit in the
+        regular season bucket and are identified by their gameNote ("NBA Cup
+        - Group Play", "NBA Cup Championship"). neutralSite was the old
+        heuristic and is wrong in both directions: only the Las Vegas
+        knockout rounds are neutral (61 of the 67 tournament games are
+        played at home arenas), while the Paris and Mexico City games are
+        neutral but ordinary regular season games.
         """
         if season_type is None:
             season_type = _EVENT_TYPE.get(event_id, _TYPE_REGULAR)
@@ -740,16 +777,24 @@ class game_info(abstract.game_info):
             return "playoffs", True, False, False
         if season_type == _TYPE_PLAY_IN:
             return "play-in", False, False, True
-        if competition.get("neutralSite"):
-            # There is no in-season tournament season type: those games sit in
-            # the regular season bucket. The only neutral-site NBA games are
-            # the tournament, so that is what identifies them.
+        if "NBA Cup" in note:
             return "in-season tournament", False, True, False
         return "regular", False, False, False
 
     def _fetch(self):
         season, season_type, competition = _summary_season(self.soup)
         if not competition or season is None:
+            return
+        # Excluded events (All-Star) are stopped before anything is read from
+        # the payload: no field, venue, or referee side effects. A season
+        # crawl never reaches this code -- game_data already refused them, so
+        # link_game_data has nothing to link -- but get_game_info called
+        # directly on the href must not write a row either.
+        note = _game_note(self.soup)
+        reason = _skip_reason(note)
+        if reason:
+            log.warning("skipping %s: %s; not writing game info",
+                        self.href, reason)
             return
         home, away = _sides(competition)
         if not home or not away:
@@ -796,7 +841,7 @@ class game_info(abstract.game_info):
 
         event_id = _href_parts(self.href)[-1]
         (self._type, self._playoffs, self._in_season_tournament,
-         self._play_in) = self._classify(competition, season_type, event_id)
+         self._play_in) = self._classify(season_type, event_id, note)
 
         self._date = str(competition.get("date") or "")[:10]
         self._season = season
@@ -1001,6 +1046,17 @@ class game_data(abstract.game_data):
     def _fetch(self):
         season, _, competition = _summary_season(self.soup)
         if not competition or season is None:
+            return
+
+        # Excluded events (All-Star) come before the postponed check so an
+        # unplayed one gets its real reason rather than "not completed". The
+        # tables stay empty: link_game_data then links nothing (so no
+        # game_info row is ever built), saved_any writes no rows, and
+        # id_cache is left unmarked so the next run retries and logs again.
+        reason = _skip_reason(_game_note(self.soup))
+        if reason:
+            log.warning("skipping %s: %s; not writing game data",
+                        self.href, reason)
             return
 
         # ESPN keeps postponed fixtures as events of their own with a full

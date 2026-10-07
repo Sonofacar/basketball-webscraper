@@ -1126,6 +1126,16 @@ class engine(debug):
         info = self.game_info(href)
         if not href in self.game_id_cache.keys():
             info.fetch(self.game_max_id)
+            if info.home_team_href is None:
+                # _fetch refused the event (excluded, or no summary
+                # published). refresh_output pads every field to a default,
+                # so saving would write a plausible-looking empty row; the
+                # row and the id_cache mark are both skipped instead, and
+                # the next run retries.
+                log.warning("no game info produced for %s; not marking "
+                            "game_info complete in id_cache (will retry on "
+                            "next run)", href)
+                return info
             self.game_max_id += 1
             self.get_links(info)
             self.update_id_cache(href,
