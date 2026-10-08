@@ -89,9 +89,9 @@ Referee_ID3 INTEGER,
 FOREIGN KEY(Home_Team_ID) REFERENCES team_info(Team_ID),
 FOREIGN KEY(Away_Team_ID) REFERENCES team_info(Team_ID),
 FOREIGN KEY(Season) REFERENCES season_info(Season),
-FOREIGN KEY(Referee_ID1) REFERENCES referees(Referee_ID),
-FOREIGN KEY(Referee_ID2) REFERENCES referees(Referee_ID),
-FOREIGN KEY(Referee_ID3) REFERENCES referees(Referee_ID)
+FOREIGN KEY(Referee_ID1) REFERENCES referee_info(Referee_ID),
+FOREIGN KEY(Referee_ID2) REFERENCES referee_info(Referee_ID),
+FOREIGN KEY(Referee_ID3) REFERENCES referee_info(Referee_ID)
 );"""
 
 team_info = """CREATE TABLE IF NOT EXISTS team_info(
@@ -107,8 +107,8 @@ Season INTEGER CHECK (Season > 1990),
 Coach_ID INTEGER,
 Executive_ID INTEGER,
 FOREIGN KEY(Season) REFERENCES season_info(Season),
-FOREIGN KEY(Executive_ID) REFERENCES executives(Executive_ID),
-FOREIGN KEY(Coach_ID) REFERENCES coaches(Coach_ID)
+FOREIGN KEY(Executive_ID) REFERENCES executive_info(Executive_ID),
+FOREIGN KEY(Coach_ID) REFERENCES coach_info(Coach_ID)
 );"""
 
 team_games = """CREATE TABLE IF NOT EXISTS team_games(

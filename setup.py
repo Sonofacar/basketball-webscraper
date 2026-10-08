@@ -31,6 +31,7 @@ setup(
         "console_scripts": [
             "bballInitializeDB = scripts.initialize_db:main",
             "bballScrapeYearly = scripts.scrape_yearly:main",
+            "bballVerify = scripts.verify:main",
         #     "bball_scrape_daily = scripts.scrape_daily.py:main",
         ],
     },
