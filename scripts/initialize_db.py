@@ -294,6 +294,9 @@ type TEXT,
 CONSTRAINT unique_ids UNIQUE (basketball_reference,nba,espn,type)
 );"""
 
+id_cache_index = """CREATE INDEX IF NOT EXISTS id_cache_type_value
+ON id_cache(type, value);"""
+
 # Execute Commands
 def main():
     db.execute(game_info)
@@ -308,6 +311,7 @@ def main():
     db.execute(executive_info)
     db.execute(coach_info)
     db.execute(id_cache)
+    db.execute(id_cache_index)
 
 if __name__ == "__main__":
     main()

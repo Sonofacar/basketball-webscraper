@@ -15,6 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import sqlite3
+
 from abc import abstractmethod
 from ..debug import assume, debug, get_logger
 from datetime import datetime, timezone
@@ -922,6 +924,20 @@ def empty_href_wrap(function):
             return function(self, *args, **kwargs)
     return wrapper
 
+# Data table and primary key for each id-bearing id_cache type. The value
+# column is NOT an id for season_info (it holds the Season itself), game_data
+# (the flag 1), or rankings (a rank), so those types have no counter and no
+# entry here.
+ID_TABLES = {
+    "referee_info":   ("referee_info",   "Referee_ID"),
+    "executive_info": ("executive_info", "Executive_ID"),
+    "coach_info":     ("coach_info",     "Coach_ID"),
+    "player_info":    ("player_info",    "Player_ID"),
+    "team_info":      ("team_info",      "Team_ID"),
+    "game_info":      ("game_info",      "Game_ID"),
+}
+
+
 class engine(debug):
     def __init__(self, pager, database):
         self.pager = pager
@@ -958,6 +974,49 @@ class engine(debug):
                    "type": [location]}
         self.database.save_data(id_data, "id_cache")
         cache.update({href: ID})
+
+    def _reserve(self, counter_attr, id_type):
+        """Return the highest id ever issued for `id_type` and advance the
+        in-memory counter past it, so fetch(prev) issues prev + 1.
+
+        The floor is the max of three sources: this session's counter, the
+        id_cache value column for the type across *all* source columns (ids
+        are global per type, so scraping a second source into one database
+        cannot mint a duplicate primary key the way the old per-column max
+        did -- that collision was silently swallowed by sqlite.execute and
+        left a phantom id_cache mark), and the entity table's own primary
+        key (rows whose mark is missing). It is evaluated at every
+        allocation rather than once at construction, so engines created
+        earlier in a process cannot hand out ids another engine has since
+        written. With no database location (dry-run) or before the schema
+        exists, only the counter applies -- the same allocation the old
+        constructor-time max produced.
+
+        The counter never moves backwards: an id reserved for a fetch that
+        is later refused is skipped, which is why ids may legitimately have
+        gaps in a combined database.
+        """
+        prev = getattr(self, counter_attr, 0)
+        table, pk = ID_TABLES[id_type]
+        try:
+            con = self.database.give_connection()
+            if con is not None:
+                cur = con.cursor()
+                row = cur.execute(
+                    "SELECT MAX(value) FROM id_cache WHERE type = ?",
+                    (id_type,)).fetchone()
+                cell = cur.execute(
+                    f"SELECT MAX({pk}) FROM {table}").fetchone()
+                cur.close()
+                con.close()
+                prev = max(prev, row[0] or 0, cell[0] or 0)
+        except sqlite3.Error as e:
+            # Pre-initialized database: the counter alone is still correct,
+            # because there are no rows to collide with.
+            log.warning("could not read the id floor for %s from the "
+                        "database: %s", id_type, e)
+        setattr(self, counter_attr, prev + 1)
+        return prev
 
     @staticmethod
     def safe_set_id(obj):
@@ -1051,8 +1110,7 @@ class engine(debug):
     def get_referee_info(self, href):
         info = self.referee_info(href)
         if not href in self.referee_id_cache.keys():
-            info.fetch(self.referee_max_id)
-            self.referee_max_id += 1
+            info.fetch(self._reserve("referee_max_id", "referee_info"))
             self.update_id_cache(href,
                                  info.id,
                                  self.referee_id_cache,
@@ -1068,8 +1126,7 @@ class engine(debug):
     def get_executive_info(self, href):
         info = self.executive_info(href)
         if not href in self.executive_id_cache.keys():
-            info.fetch(self.executive_max_id)
-            self.executive_max_id += 1
+            info.fetch(self._reserve("executive_max_id", "executive_info"))
             self.update_id_cache(href,
                                  info.id,
                                  self.executive_id_cache,
@@ -1085,8 +1142,7 @@ class engine(debug):
     def get_coach_info(self, href):
         info = self.coach_info(href)
         if not href in self.coach_id_cache.keys():
-            info.fetch(self.coach_max_id)
-            self.coach_max_id += 1
+            info.fetch(self._reserve("coach_max_id", "coach_info"))
             self.update_id_cache(href,
                                  info.id,
                                  self.coach_id_cache,
@@ -1102,8 +1158,7 @@ class engine(debug):
     def get_player_info(self, href):
         info = self.player_info(href)
         if not href in self.player_id_cache.keys():
-            info.fetch(self.player_max_id)
-            self.player_max_id += 1
+            info.fetch(self._reserve("player_max_id", "player_info"))
             self.update_id_cache(href,
                                  info.id,
                                  self.player_id_cache,
@@ -1119,8 +1174,7 @@ class engine(debug):
     def get_team_info(self, href):
         info = self.team_info(href)
         if not href in self.team_id_cache.keys():
-            info.fetch(self.team_max_id)
-            self.team_max_id += 1
+            info.fetch(self._reserve("team_max_id", "team_info"))
             self.get_links(info)
             self.update_id_cache(href,
                                  info.id,
@@ -1157,7 +1211,7 @@ class engine(debug):
     def get_game_info(self, href):
         info = self.game_info(href)
         if not href in self.game_id_cache.keys():
-            info.fetch(self.game_max_id)
+            info.fetch(self._reserve("game_max_id", "game_info"))
             if info.home_team_href is None:
                 # _fetch refused the event (excluded, or no summary
                 # published). refresh_output pads every field to a default,
@@ -1168,7 +1222,6 @@ class engine(debug):
                             "game_info complete in id_cache (will retry on "
                             "next run)", href)
                 return info
-            self.game_max_id += 1
             self.get_links(info)
             self.update_id_cache(href,
                                  info.id,
