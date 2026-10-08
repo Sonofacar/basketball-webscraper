@@ -38,6 +38,17 @@ Phase 2 adds two sections on top of the Phase 1 existence checks:
   exactly what this tool exists to surface, so only an explicit, documented
   registry entry may excuse a value.
 
+Phase 3 adds `fix` (and its executor `apply_fix`), driven by the CLI's
+`--fix`/`--apply`. It merges each confirmed cross-source cluster into one
+row -- the lowest id survives, unset survivor cells are filled from the
+duplicates, every referencing column and source mark is re-pointed, and the
+duplicate rows are deleted -- joins a crash-window row to a confirmed
+sibling, re-points a phantom mark and its children to a confirmed sibling,
+and re-inserts a missing `game_data` completion mark. It is dry-run by
+default and all-or-nothing when applied. Nothing is merged without a
+confirmed cross-source match, and a href is never invented: an unmarked
+row's lost mark is unrecoverable, so such cases stay report-only.
+
 Two conventions the checks depend on:
 
 * id_cache marks live in one of three per-source columns
@@ -82,6 +93,17 @@ ROW_TARGETS = {
     "season_info":    ("season_info",    "Season"),
 }
 
+# Entity -> its info table, for the four types the identity matcher links
+# across sources. Coach and executive rows are attributed but never matched,
+# so they never merge.
+ENTITY_TABLE = {
+    "team": "team_info",
+    "game": "game_info",
+    "player": "player_info",
+    "referee": "referee_info",
+}
+TABLE_ENTITY = {table: entity for entity, table in ENTITY_TABLE.items()}
+
 # Where a phantom mark's id is still referenced from. A mark whose row is
 # gone but whose id still has referencing rows must NOT be cleared: the
 # next scrape would mint a new id, leave these rows orphaned and duplicate
@@ -112,6 +134,10 @@ REFERENCED_BY = {
         ("team_games", "Opponent_ID"),
         ("team_quarters", "Team_ID"),
         ("team_quarters", "Opponent_ID"),
+        ("player_games", "Team_ID"),
+        ("player_games", "Opponent_ID"),
+        ("player_quarters", "Team_ID"),
+        ("player_quarters", "Opponent_ID"),
         ("season_info", "Champion"),
     ),
     "referee_info": (
@@ -339,6 +365,86 @@ PLAYER_BOX_FIELDS = [(c, "int") for c in
                       "Defensive_Rebounds", "Assists", "Steals", "Blocks",
                       "Turnovers", "Fouls", "Points", "PM")] + \
                     [("Win", "bool"), ("Home", "bool")]
+
+
+# ---------------------------------------------------------------- Phase 3
+
+# Columns a merge fills from a duplicate row when the survivor's own cell is
+# unset (None, '', 0, or the column's own sentinel). Identity columns are
+# deliberately absent -- the primary key, the Season natural key, the team
+# Name/Abbreviation, the game Date/Home/Away pair -- as are the game
+# classification flags: matching already validated the identity, and
+# rewriting a classification would silently absorb the very cross-source
+# disagreement the diffs section exists to report.
+FILL_FIELDS = {
+    "team_info": ("Location", "Wins", "Losses", "League_Ranking",
+                  "Playoff_Appearance", "Coach_ID", "Executive_ID"),
+    "game_info": ("Location", "Duration", "Attendance",
+                  "Referee_ID1", "Referee_ID2", "Referee_ID3"),
+    "player_info": ("Birthday", "Shoots", "High_School", "College",
+                    "Draft_Position", "Draft_Team", "Draft_Year",
+                    "Debut_Date"),
+    "referee_info": ("Birthday", "Number"),
+}
+
+# Columns whose "unset" value is neither 0 nor '' (refresh_output pads them
+# to a different sentinel).
+FILL_SENTINELS = {"League_Ranking": (99,)}
+
+
+# Boxscore child tables a merge must de-duplicate. Re-pointing the children
+# of a vanished duplicate at the survivor would otherwise leave one row per
+# source for the same real slot, so a 3-source merge would triple a player's
+# game totals. For each (table, key columns, owner column) a merge keeps one
+# row per key: the survivor's own row when it has one, else the earliest
+# source's. De-duplication runs against the rows captured before the owner
+# column is re-pointed, which is the only moment the per-source ownership is
+# still distinguishable. Only the entity merges that make up a key can make
+# it collide: games x players for player_games/player_quarters, games x teams
+# for team_games/team_quarters.
+CHILD_KEYS = {
+    "game": (
+        ("player_games", ("Game_ID", "Player_ID"), "Game_ID"),
+        ("team_games", ("Game_ID", "Team_ID"), "Game_ID"),
+        ("player_quarters", ("Game_ID", "Player_ID", "Quarter"), "Game_ID"),
+        ("team_quarters", ("Game_ID", "Team_ID", "Quarter"), "Game_ID"),
+    ),
+    "player": (
+        ("player_games", ("Game_ID", "Player_ID"), "Player_ID"),
+        ("player_quarters", ("Game_ID", "Player_ID", "Quarter"),
+         "Player_ID"),
+    ),
+    "team": (
+        ("team_games", ("Game_ID", "Team_ID"), "Team_ID"),
+        ("team_quarters", ("Game_ID", "Team_ID", "Quarter"), "Team_ID"),
+    ),
+}
+
+
+def _is_unset(column, value):
+    """Is a fillable cell unset (None, '', 0, or its column sentinel)?"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    if value == 0:
+        return True
+    return value in FILL_SENTINELS.get(column, ())
+
+
+# Plan ordering: merges, then unmarked joins, then phantom re-points, then
+# mark inserts; within a kind by table, surviving id (or first rebased id)
+# and href. Deterministic so the dry-run plan and the applied plan agree.
+_ACTION_ORDER = {"merge": 0, "unmarked_merge": 1, "phantom_repoint": 2,
+                 "mark_insert": 3}
+
+
+def _action_order(action):
+    key = action.get("survivor")
+    if key is None and action.get("rebase"):
+        key = action["rebase"][0]["id"]
+    return (_ACTION_ORDER.get(action["kind"], 9),
+            action.get("table", ""), key or 0, action.get("href", ""))
 
 
 def _source_order(item):
@@ -2165,3 +2271,500 @@ class Verifier:
         self.con.commit()
         self._ident = None  # marks changed: rebuild identity on next use
         return {"deleted": deleted, "skipped": skipped}
+
+    # ---------- section 7: Phase 3 merge (--fix) ----------
+
+    def fix(self):
+        """Dry-run plan for the Phase 3 repairs; writes nothing.
+
+        Every row is section "fix", severity "info": a plan is not itself a
+        defect (the underlying duplicates and holes are already reported by
+        matches/phantoms/holes), it is what `--apply` would execute. See
+        `_fix_plan` for the repairs covered.
+        """
+        actions, report_only = self._fix_plan()
+        return self._fix_rows(actions, report_only)
+
+    def apply_fix(self):
+        """Execute the `fix` plan, all-or-nothing, in one transaction.
+
+        A half-applied merge -- foreign keys moved but source marks stale,
+        or a row deleted before its children were re-pointed -- is worse
+        than an unmerged database, because the next scrape would mint fresh
+        ids on top of the inconsistency. Any error rolls the whole
+        transaction back and propagates, leaving the database untouched.
+
+        Returns {"actions", "report_only", "rows"} (`rows` is the plan in
+        the `fix` section's report shape).
+        """
+        actions, report_only = self._fix_plan()
+        con = self.con
+        try:
+            for action in actions:
+                self._apply_action(con, action)
+            con.commit()
+        except Exception:
+            con.rollback()
+            self._ident = None
+            raise
+        self._ident = None  # rows and marks changed: rebuild on next use
+        return {"actions": actions, "report_only": report_only,
+                "rows": self._fix_rows(actions, report_only)}
+
+    def _apply_action(self, con, action):
+        """Run one planned action's statements on the open transaction."""
+        if action["kind"] == "mark_insert":
+            con.execute(
+                f"INSERT INTO id_cache ({action['column']}, value, type) "
+                "VALUES (?, ?, ?)",
+                (action["href"], action["value"], action["type"]))
+            return
+        table, pk = action["table"], action["pk"]
+        for column, value in action["fills"]:
+            con.execute(f"UPDATE {table} SET {column} = ? WHERE {pk} = ?",
+                        (value, action["survivor"]))
+        # Ownership of the boxscore children must be captured before the
+        # owner columns are re-pointed: afterwards every duplicate row looks
+        # like the survivor's and the preference order is unrecoverable.
+        captured = self._capture_children(con, action["entity"],
+                                         action["survivor"], action["rebase"])
+        for item in action["rebase"]:
+            moved = item["id"]
+            for child, column in REFERENCED_BY[action["type"]]:
+                con.execute(
+                    f"UPDATE {child} SET {column} = ? WHERE {column} = ?",
+                    (action["survivor"], moved))
+            con.execute(
+                "UPDATE id_cache SET value = ? WHERE type = ? AND value = ?",
+                (action["survivor"], action["type"], moved))
+            if item["delete_row"]:
+                con.execute(f"DELETE FROM {table} WHERE {pk} = ?", (moved,))
+        self._dedup_children(con, action["entity"], captured)
+
+    def _capture_children(self, con, entity, survivor, rebase):
+        """Rowids (and preference rank) of boxscore rows a merge touches.
+
+        `rebase` is source-ordered, so rank 0 is the survivor's own row and
+        later ranks are the earliest source that follows. Captured before
+        the owner column is re-pointed; see CHILD_KEYS and
+        `_dedup_children`.
+        """
+        order = [survivor] + [i["id"] for i in rebase]
+        rank = {value: n for n, value in enumerate(order)}
+        captured = {}
+        for table, _key, own_col in CHILD_KEYS.get(entity, ()):
+            ph = ", ".join("?" for _ in order)
+            rows = self._rows(
+                f"SELECT rowid AS rid, {own_col} AS own FROM {table} "
+                f"WHERE {own_col} IN ({ph})", tuple(order))
+            if rows:
+                captured[table] = {r["rid"]: rank[r["own"]] for r in rows}
+        return captured
+
+    def _dedup_children(self, con, entity, captured):
+        """Delete boxscore rows a merge made duplicate, keeping the best.
+
+        For each key, the survivor's own row wins; otherwise the earliest
+        source's. Runs after the owner columns are re-pointed, so the key is
+        the merged key; the preference comes from the captured ranks.
+        """
+        for table, key_cols, _own_col in CHILD_KEYS.get(entity, ()):
+            rid_rank = captured.get(table)
+            if not rid_rank:
+                continue
+            cols = ", ".join(key_cols)
+            ph = ", ".join("?" for _ in rid_rank)
+            rows = self._rows(
+                f"SELECT rowid AS rid, {cols} FROM {table} "
+                f"WHERE rowid IN ({ph})", tuple(rid_rank))
+            seen = set()
+            delete = []
+            for row in sorted(rows,
+                              key=lambda r: (rid_rank[r["rid"]], r["rid"])):
+                key = tuple(row[c] for c in key_cols)
+                if key in seen:
+                    delete.append(row["rid"])
+                else:
+                    seen.add(key)
+            for rid in delete:
+                con.execute(f"DELETE FROM {table} WHERE rowid = ?", (rid,))
+
+    def _fix_plan(self):
+        """Compute every Phase 3 repair without touching the database.
+
+        Returns (actions, report_only). Actions are executable dicts:
+        `merge` (fold whole duplicate rows into a survivor), `unmarked_merge`
+        (fold a crash-window row in), `phantom_repoint` (re-point a missing
+        row's mark and children) and `mark_insert` (re-insert a missing
+        game_data completion flag). `report_only` names what looks repairable
+        but is deliberately left alone -- same-source duplicate clusters, and
+        anything whose identity cannot be recovered without inventing a href
+        or a mark.
+        """
+        ident = self._identity()
+        marks_by_type = {}
+        for m in self._all_marks():
+            marks_by_type.setdefault(m["type"], []).append(m)
+
+        actions, report_only = [], []
+
+        # Partition the confirmed clusters: one row per source is a clean
+        # merge; two rows from one source is a same-source duplicate (not
+        # auto-merged); a cluster with no natural key cannot be a join
+        # target. Index each mergeable cluster's key so unmarked rows and
+        # phantom marks can find their surviving sibling.
+        keyed = {entity: {} for entity in ENTITY_TABLE}
+        mergeable = []
+        for cluster in ident["clusters"]:
+            entity = cluster["entity"]
+            members = sorted(cluster["rows"], key=_source_order)
+            sources = [s for _, s in members]
+            if len(set(sources)) != len(sources):
+                report_only.append({
+                    "kind": "same_source",
+                    "message":
+                        f"{ENTITY_TABLE[entity]}: confirmed cluster spans "
+                        f"{len(members)} row(s) across "
+                        f"{len(set(sources))} source(s); same-source "
+                        "duplicate merges are report-only"})
+                continue
+            key = self._cluster_key(entity, members)
+            if key is None:
+                report_only.append({
+                    "kind": "unresolvable",
+                    "message":
+                        f"{ENTITY_TABLE[entity]}: confirmed cluster has no "
+                        "resolvable natural key; report-only"})
+                continue
+            mergeable.append((cluster, members))
+            keyed[entity].setdefault(key, []).append((cluster, members))
+
+        for cluster, members in mergeable:
+            actions.append(self._merge_action(cluster, members))
+
+        phantom_rows = self.phantoms()
+
+        # Unmarked rows: the mark that produced them is gone and cannot be
+        # invented, so the only sound repair is to fold the row into an
+        # already-confirmed cross-source sibling when its natural key names
+        # exactly one.
+        all_team_slug = self._all_team_slug()
+        for finding in phantom_rows:
+            if finding["kind"] != "unmarked_row":
+                continue
+            entity = TABLE_ENTITY.get(finding["type"])
+            if entity is None:
+                continue  # season_info self-heals on the next scrape
+            row_id = finding["value"]
+            key = self._unmarked_key(entity, row_id, all_team_slug)
+            candidates = keyed[entity].get(key) if key is not None else None
+            if not candidates:
+                report_only.append({
+                    "kind": "no_sibling",
+                    "message":
+                        f"{finding['type']} row {row_id} has no id_cache "
+                        "mark and no confirmable cross-source sibling; "
+                        "report-only (a mark cannot be invented)"})
+                continue
+            if len(candidates) > 1:
+                report_only.append({
+                    "kind": "ambiguous",
+                    "message":
+                        f"{finding['type']} row {row_id} matches "
+                        f"{len(candidates)} confirmed clusters; report-only"})
+                continue
+            actions.append(self._unmarked_action(
+                entity, row_id, candidates[0][1]))
+
+        # Phantom marks whose row is gone but whose id still has referencing
+        # rows: re-point the mark and every child to a confirmed sibling.
+        # Only a team's identity is recoverable from its mark (the href
+        # carries the season and, directly or through the learned numeric
+        # crosswalk, the franchise); game/player/referee hrefs are opaque,
+        # so those stay report-only.
+        learned = self._learned_team_ids()
+        for finding in phantom_rows:
+            if finding["kind"] != "phantom" or finding["clearable"]:
+                continue
+            id_type = finding["type"]
+            if id_type != "team_info":
+                report_only.append({
+                    "kind": "no_sibling",
+                    "message":
+                        f"{id_type} phantom value {finding['value']} has "
+                        f"{finding['dependencies']} referencing row(s) but "
+                        "no recoverable identity; report-only"})
+                continue
+            key = self._phantom_team_key(finding.get("source"),
+                                         finding.get("href"), learned)
+            candidates = keyed["team"].get(key) if key is not None else None
+            if not candidates:
+                report_only.append({
+                    "kind": "no_sibling",
+                    "message":
+                        f"team_info phantom value {finding['value']} has "
+                        f"{finding['dependencies']} referencing row(s) but "
+                        "no confirmed cross-source sibling; report-only"})
+                continue
+            if len(candidates) > 1:
+                report_only.append({
+                    "kind": "ambiguous",
+                    "message":
+                        f"team_info phantom value {finding['value']} "
+                        f"matches {len(candidates)} confirmed clusters; "
+                        "report-only"})
+                continue
+            actions.append(self._phantom_action(finding, candidates[0][1]))
+
+        # Boxscore present but no completion flag: re-insert the flag from
+        # the game's own game_info mark href -- nothing is invented.
+        for finding in self.holes():
+            if finding["kind"] != "boxscore_unmarked":
+                continue
+            game_id = finding["game_id"]
+            for m in marks_by_type.get("game_info", ()):
+                if m["value"] != game_id:
+                    continue
+                col, href = self._mark_href(m)
+                if col is None or self._game_data_mark(col, href):
+                    continue
+                actions.append({
+                    "kind": "mark_insert", "table": "id_cache",
+                    "column": col, "href": href, "value": 1,
+                    "type": "game_data",
+                    "message":
+                        f"game_data: re-insert the completion mark for "
+                        f"game {game_id} ({col}={href})"})
+
+        actions.sort(key=_action_order)
+        report_only.sort(key=lambda r: (r["kind"], r["message"]))
+        return actions, report_only
+
+    def _merge_action(self, cluster, members):
+        entity = cluster["entity"]
+        table = ENTITY_TABLE[entity]
+        pk = ROW_TARGETS[table][1]
+        survivor = min(i for i, _ in members)
+        survivor_src = next(s for i, s in members if i == survivor)
+        rebase = [i for i, _ in members if i != survivor]
+        survivor_row = self._ident["rows"][table][survivor]
+        fills = self._fill_cells(table, survivor_row, rebase)
+        referenced, marks = self._merge_stats(table, rebase)
+        dupes = ", ".join(f"{i} ({s})" for i, s in members
+                          if i != survivor)
+        return {
+            "kind": "merge", "entity": entity, "table": table, "pk": pk,
+            "type": table, "survivor": survivor,
+            "rebase": [{"id": i, "delete_row": True} for i in rebase],
+            "fills": fills,
+            "message": (f"{table}: merge {dupes} into {survivor} "
+                        f"({survivor_src}); {marks} source mark(s) moved, "
+                        f"{referenced} referencing row(s) re-pointed, "
+                        f"{len(fills)} cell(s) filled, {len(rebase)} row(s) "
+                        "deleted")}
+
+    def _unmarked_action(self, entity, row_id, members):
+        table = ENTITY_TABLE[entity]
+        pk = ROW_TARGETS[table][1]
+        survivor = min(i for i, _ in members)
+        survivor_src = next(s for i, s in members if i == survivor)
+        survivor_row = self._ident["rows"][table][survivor]
+        fills = self._fill_cells(table, survivor_row, [row_id])
+        referenced, _ = self._merge_stats(table, [row_id])
+        return {
+            "kind": "unmarked_merge", "entity": entity, "table": table,
+            "pk": pk, "type": table, "survivor": survivor,
+            "rebase": [{"id": row_id, "delete_row": True}],
+            "fills": fills,
+            "message": (f"{table}: unmarked row {row_id} joins the confirmed "
+                        f"cross-source cluster at {survivor} "
+                        f"({survivor_src}); {referenced} referencing row(s) "
+                        f"re-pointed, {len(fills)} cell(s) filled, row "
+                        "deleted")}
+
+    def _phantom_action(self, finding, members):
+        value = finding["value"]
+        survivor = min(i for i, _ in members)
+        survivor_src = next(s for i, s in members if i == survivor)
+        referenced, marks = self._merge_stats("team_info", [value])
+        return {
+            "kind": "phantom_repoint", "entity": "team",
+            "table": "team_info", "pk": "Team_ID", "type": "team_info",
+            "survivor": survivor,
+            "rebase": [{"id": value, "delete_row": False}], "fills": [],
+            "message": (f"team_info: phantom mark {finding.get('source')}="
+                        f"{finding.get('href')} (value {value}, "
+                        f"{finding['dependencies']} referencing row(s)) "
+                        f"re-points to confirmed sibling {survivor} "
+                        f"({survivor_src}); {referenced} row(s) and {marks} "
+                        "mark(s) re-pointed")}
+
+    def _merge_stats(self, id_type, ids):
+        """(referencing rows, source marks) that rebasing `ids` touches."""
+        referenced = sum(self._dependent_count(id_type, i) for i in ids)
+        marks = 0
+        for i in ids:
+            row = self._one(
+                "SELECT COUNT(*) AS n FROM id_cache WHERE type = ? "
+                "AND value = ?", (id_type, i))
+            marks += row["n"]
+        return referenced, marks
+
+    def _fill_cells(self, table, survivor_row, dupe_ids):
+        """(column, value) pairs a survivor picks up from duplicate rows."""
+        fills = []
+        rows = self._ident["rows"][table]
+        for column in FILL_FIELDS.get(table, ()):
+            if not _is_unset(column, survivor_row[column]):
+                continue
+            for dupe in dupe_ids:
+                row = rows.get(dupe)
+                if row is None:
+                    continue
+                value = row[column]
+                if not _is_unset(column, value):
+                    fills.append((column, value))
+                    break
+        return fills
+
+    def _cluster_key(self, entity, members):
+        """The cross-source natural key of a confirmed cluster, or None."""
+        ident = self._ident
+        rows = ident["rows"]
+        first = members[0][0]
+        if entity == "team":
+            slug = ident["team_slug"].get(first)
+            if slug is None:
+                return None
+            return (slug, rows["team_info"][first]["Season"])
+        if entity == "game":
+            game = ident["games"].get(first)
+            if game is None:
+                return None
+            return (game["home"], game["away"], game["date"])
+        if entity == "player":
+            name = None
+            bday = None
+            for pid, _ in members:
+                row = rows["player_info"][pid]
+                if name is None:
+                    name = identity.normalize_name(row["Name"])
+                if bday is None:
+                    bday = identity.normalize_birthday(row["Birthday"])
+            return (name, bday)
+        row = rows["referee_info"][first]
+        name = identity.normalize_name(row["Name"])
+        return None if not name else name
+
+    def _unmarked_key(self, entity, row_id, all_team_slug):
+        """Natural key of an unmarked row, from the row itself (no href)."""
+        rows = self._ident["rows"]
+        if entity == "team":
+            row = rows["team_info"].get(row_id)
+            slug = all_team_slug.get(row_id) if row is not None else None
+            return None if slug is None else (slug, row["Season"])
+        if entity == "game":
+            row = rows["game_info"].get(row_id)
+            if row is None:
+                return None
+            home = all_team_slug.get(row["Home_Team_ID"])
+            away = all_team_slug.get(row["Away_Team_ID"])
+            date = identity.normalize_date(row["Date"])
+            if home is None or away is None or date is None:
+                return None
+            return (home, away, date)
+        if entity == "player":
+            row = rows["player_info"].get(row_id)
+            if row is None:
+                return None
+            return (identity.normalize_name(row["Name"]),
+                    identity.normalize_birthday(row["Birthday"]))
+        row = rows["referee_info"].get(row_id)
+        if row is None:
+            return None
+        name = identity.normalize_name(row["Name"])
+        return None if not name else name
+
+    def _all_team_slug(self):
+        """Team_ID -> franchise slug for every team row, marked or not."""
+        ident = self._ident
+        out = {}
+        for tid, row in ident["rows"]["team_info"].items():
+            a = ident["attrib"]["team_info"].get(tid)
+            href = a["href"] if a else None
+            slug = identity.resolve_team(href=href, name=row["Name"],
+                                         abbrev=row["Abbreviation"])
+            if slug is not None:
+                out[tid] = slug
+        return out
+
+    def _learned_team_ids(self):
+        """(source, numeric href id) -> slug, learned from marked rows."""
+        ident = self._ident
+        learned = {}
+        for tid in ident["rows"]["team_info"]:
+            a = ident["attrib"]["team_info"].get(tid)
+            if not a or not a["href"]:
+                continue
+            slug = ident["team_slug"].get(tid)
+            if slug is None:
+                continue
+            for col, pattern in (("nba", identity.NBA_TEAM_RE),
+                                 ("espn", identity.ESPN_TEAM_RE)):
+                if a["source"] == col:
+                    m = pattern.match(a["href"])
+                    if m:
+                        learned[(col, m.group(1))] = slug
+        return learned
+
+    def _phantom_team_key(self, source, href, learned):
+        """(franchise slug, season) for a phantom team mark, or None.
+
+        All three sources' team hrefs carry the season; only
+        basketball-reference's carries the abbreviation, so nba.com/ESPN
+        marks need the numeric id to have been learned from a marked row of
+        the same source. An unknown href yields None (report-only).
+        """
+        text = str(href or "")
+        m = re.search(r"/(\d{4})(?:\.html)?$", text)
+        if m is None:
+            return None
+        season = int(m.group(1))
+        if source == "basketball_reference":
+            slug = identity.resolve_team(href=text)
+        elif source in ("nba", "espn"):
+            pattern = (identity.NBA_TEAM_RE if source == "nba"
+                       else identity.ESPN_TEAM_RE)
+            match = pattern.match(text)
+            slug = learned.get((source, match.group(1))) if match else None
+        else:
+            slug = None
+        return None if slug is None else (slug, season)
+
+    def _fix_rows(self, actions, report_only):
+        """Render an action list in the report-row shape."""
+        out = []
+        for action in actions:
+            extras = {}
+            if "table" in action:
+                extras["table"] = action["table"]
+            if "survivor" in action:
+                extras["survivor"] = action["survivor"]
+            if action.get("rebase"):
+                extras["ids"] = [i["id"] for i in action["rebase"]]
+            out.append(_info("fix", action["kind"], action["message"],
+                             **extras))
+        for item in report_only:
+            out.append(_info("fix", item["kind"], item["message"]))
+        counts = {}
+        for action in actions:
+            counts[action["kind"]] = counts.get(action["kind"], 0) + 1
+        parts = ", ".join(
+            f"{counts.get(kind, 0)} {kind}" for kind in
+            ("merge", "unmarked_merge", "phantom_repoint", "mark_insert"))
+        out.append(_info(
+            "fix", "summary",
+            f"fix plan: {len(actions)} action(s) ({parts}); "
+            f"{len(report_only)} report-only item(s)",
+            actions=len(actions), report_only=len(report_only)))
+        return out

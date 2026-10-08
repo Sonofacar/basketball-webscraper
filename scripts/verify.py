@@ -27,9 +27,11 @@ desc = """Verify existence and integrity of scraped basketball data.
 
 Read-only by default: prints a report of phantom marks, missing data,
 foreign-key orphans, broken invariants, cross-source identity matches
-and field-level differences between sources. The only repair flag is
---clear-phantoms, which deletes marks whose claimed data is absent so the
-next scrape retries just those."""
+and field-level differences between sources. Two repair flags exist:
+--clear-phantoms deletes marks whose claimed data is absent so the next
+scrape retries just those, and --fix plans (or with --apply executes) the
+Phase 3 merges that collapse each confirmed cross-source pair into one
+row."""
 parser = argparse.ArgumentParser(prog = "bballVerify",
                                  prefix_chars = "-",
                                  description = desc,
@@ -65,6 +67,22 @@ it stays in the report as needing the Phase 3 merge."""
 parser.add_argument("--clear-phantoms",
                     action = "store_true",
                     help = clear_help)
+fix_help = """Plan the Phase 3 repairs: merge each confirmed cross-source cluster into
+one row (lowest id survives, unset cells filled from the duplicates, every
+referencing column and source mark re-pointed, duplicate rows deleted),
+fold a crash-window row into a confirmed sibling, re-point a phantom mark
+and its children to a confirmed sibling, and re-insert a missing game_data
+completion mark. Dry-run: prints the plan and writes nothing. Hrefs are
+never invented and same-source duplicate clusters stay report-only."""
+parser.add_argument("--fix",
+                    action = "store_true",
+                    help = fix_help)
+apply_help = """With --fix, execute the plan in a single transaction (all-or-nothing;
+any error rolls back) instead of only printing it. Back the database up
+first, and do not run while a scrape is writing to the same file."""
+parser.add_argument("--apply",
+                    action = "store_true",
+                    help = apply_help)
 quiet_help = "Quieter logs: -q keeps warnings and errors, -qq keeps errors only."
 parser.add_argument("-q",
                     "--quiet",
@@ -109,6 +127,8 @@ def main():
         print(f"bballVerify: no such database file: {args.location}",
               file = sys.stderr)
         return 2
+    if args.apply and not args.fix:
+        parser.error("--apply requires --fix")
     sections = selected_sections()
 
     db = scraper.dbEngines.get(args.db, scraper.sqlite)(args.location)
@@ -126,6 +146,19 @@ def main():
         print(f"--clear-phantoms: deleted {len(result['deleted'])} mark(s); "
               f"skipped {len(result['skipped'])} with referencing rows "
               "(see the report)")
+
+    if args.fix:
+        if args.apply:
+            result = ver.apply_fix()
+            print("== fix (applied) ==")
+        else:
+            result = {"rows": ver.fix()}
+            print("== fix (dry-run) ==")
+        for row in result["rows"]:
+            print(f"[{row['severity'].upper()}] {row['message']}")
+        if not args.apply:
+            print("(dry-run: nothing written; re-run with --apply to "
+                  "execute)")
 
     counts = {s: {"finding": 0, "info": 0} for s in SECTIONS}
     for section in sections:
