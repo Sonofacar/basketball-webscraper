@@ -975,6 +975,28 @@ class engine(debug):
         self.database.save_data(id_data, "id_cache")
         cache.update({href: ID})
 
+    def _save_and_mark(self, output, table, href, ID, cache, location):
+        """Write the entity row first, then and only then its id_cache
+        completion mark.
+
+        The old order (mark, then save) let a swallowed IntegrityError leave
+        a mark with no row: a permanent hole that every later run skips as
+        complete. A failed save now leaves the table row, the id_cache row
+        and the in-memory dict all untouched -- so even this process retries
+        on the next call -- and logs an ERROR naming the table and href.
+
+        `save_data` returning None (dry-run engines, where every write is a
+        no-op by design) counts as success, so dry-run sessions still fill
+        the in-memory dict exactly as they did before.
+        """
+        if self.database.save_data(output, table) is False:
+            log.error("could not write %s row for %s; not marking %s "
+                      "complete in id_cache (will retry on next run)",
+                      table, href, location)
+            return False
+        self.update_id_cache(href, ID, cache, location)
+        return True
+
     def _reserve(self, counter_attr, id_type):
         """Return the highest id ever issued for `id_type` and advance the
         in-memory counter past it, so fetch(prev) issues prev + 1.
@@ -983,8 +1005,8 @@ class engine(debug):
         id_cache value column for the type across *all* source columns (ids
         are global per type, so scraping a second source into one database
         cannot mint a duplicate primary key the way the old per-column max
-        did -- that collision was silently swallowed by sqlite.execute and
-        left a phantom id_cache mark), and the entity table's own primary
+        did -- that collision was swallowed by sqlite.execute and left a
+        phantom id_cache mark), and the entity table's own primary
         key (rows whose mark is missing). It is evaluated at every
         allocation rather than once at construction, so engines created
         earlier in a process cannot hand out ids another engine has since
@@ -1111,11 +1133,8 @@ class engine(debug):
         info = self.referee_info(href)
         if not href in self.referee_id_cache.keys():
             info.fetch(self._reserve("referee_max_id", "referee_info"))
-            self.update_id_cache(href,
-                                 info.id,
-                                 self.referee_id_cache,
-                                 "referee_info")
-            self.database.save_data(info.output, 'referee_info')
+            self._save_and_mark(info.output, 'referee_info', href, info.id,
+                                self.referee_id_cache, "referee_info")
         return info
 
     @abstractmethod
@@ -1127,11 +1146,8 @@ class engine(debug):
         info = self.executive_info(href)
         if not href in self.executive_id_cache.keys():
             info.fetch(self._reserve("executive_max_id", "executive_info"))
-            self.update_id_cache(href,
-                                 info.id,
-                                 self.executive_id_cache,
-                                 "executive_info")
-            self.database.save_data(info.output, 'executive_info')
+            self._save_and_mark(info.output, 'executive_info', href, info.id,
+                                self.executive_id_cache, "executive_info")
         return info
 
     @abstractmethod
@@ -1143,11 +1159,8 @@ class engine(debug):
         info = self.coach_info(href)
         if not href in self.coach_id_cache.keys():
             info.fetch(self._reserve("coach_max_id", "coach_info"))
-            self.update_id_cache(href,
-                                 info.id,
-                                 self.coach_id_cache,
-                                 "coach_info")
-            self.database.save_data(info.output, 'coach_info')
+            self._save_and_mark(info.output, 'coach_info', href, info.id,
+                                self.coach_id_cache, "coach_info")
         return info
 
     @abstractmethod
@@ -1159,11 +1172,8 @@ class engine(debug):
         info = self.player_info(href)
         if not href in self.player_id_cache.keys():
             info.fetch(self._reserve("player_max_id", "player_info"))
-            self.update_id_cache(href,
-                                 info.id,
-                                 self.player_id_cache,
-                                 "player_info")
-            self.database.save_data(info.output, 'player_info')
+            self._save_and_mark(info.output, 'player_info', href, info.id,
+                                self.player_id_cache, "player_info")
         return info
 
     @abstractmethod
@@ -1176,11 +1186,8 @@ class engine(debug):
         if not href in self.team_id_cache.keys():
             info.fetch(self._reserve("team_max_id", "team_info"))
             self.get_links(info)
-            self.update_id_cache(href,
-                                 info.id,
-                                 self.team_id_cache,
-                                 "team_info")
-            self.database.save_data(info.output, 'team_info')
+            self._save_and_mark(info.output, 'team_info', href, info.id,
+                                self.team_id_cache, "team_info")
         return info
 
     @abstractmethod
@@ -1196,11 +1203,9 @@ class engine(debug):
             for key, value in info.rankings.items():
                 self.update_id_cache(key, value, self.rankings, "rankings")
             self.get_links(info)
-            self.update_id_cache(href,
-                                 info.season,
-                                 self.season_id_cache,
-                                 "season_info")
-            self.database.save_data(info.output, 'season_info')
+            self._save_and_mark(info.output, 'season_info', href,
+                                info.season, self.season_id_cache,
+                                "season_info")
         return info
 
     @abstractmethod
@@ -1223,11 +1228,8 @@ class engine(debug):
                             "next run)", href)
                 return info
             self.get_links(info)
-            self.update_id_cache(href,
-                                 info.id,
-                                 self.game_id_cache,
-                                 "game_info")
-            self.database.save_data(info.output, 'game_info')
+            self._save_and_mark(info.output, 'game_info', href, info.id,
+                                self.game_id_cache, "game_info")
         return info
 
     @abstractmethod
@@ -1254,18 +1256,32 @@ class engine(debug):
                          _has_data(info.team_data_quarters))
 
             if saved_any:
-                if _has_data(info.team_data):
-                    self.database.save_data(info.team_data, 'team_games')
-                if _has_data(info.player_data):
-                    self.database.save_data(info.player_data, 'player_games')
-                if _has_data(info.team_data_quarters):
-                    self.database.save_data(info.team_data_quarters, 'team_quarters')
-                if _has_data(info.player_data_quarters):
-                    self.database.save_data(info.player_data_quarters, 'player_quarters')
-                self.update_id_cache(href,
-                                     1,
-                                     self.game_data_cache,
-                                     "game_data")
+                # Attempt every non-empty table (a bad row is skipped while
+                # its neighbours save), then mark complete only if at least
+                # one save actually landed: total failure retries cleanly
+                # with nothing written to duplicate, while a partial save
+                # must mark -- re-running would duplicate the tables that
+                # did land. `is not False` so dry-run (None) still counts,
+                # matching _save_and_mark.
+                tables = ((info.team_data, 'team_games'),
+                          (info.player_data, 'player_games'),
+                          (info.team_data_quarters, 'team_quarters'),
+                          (info.player_data_quarters, 'player_quarters'))
+                wrote = False
+                for data, table in tables:
+                    if _has_data(data) and \
+                            self.database.save_data(data, table) is not False:
+                        wrote = True
+                if wrote:
+                    self.update_id_cache(href,
+                                         1,
+                                         self.game_data_cache,
+                                         "game_data")
+                else:
+                    log.error("boxscore rows existed but none could be "
+                              "written for %s; not marking game_data "
+                              "complete in id_cache (will retry on next "
+                              "run)", href)
             else:
                 log.warning("no boxscore rows produced for %s; not marking "
                             "game_data complete in id_cache (will retry on "
