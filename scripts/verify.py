@@ -26,7 +26,8 @@ from scraper.verify import Verifier, SECTIONS
 desc = """Verify existence and integrity of scraped basketball data.
 
 Read-only by default: prints a report of phantom marks, missing data,
-foreign-key orphans and broken invariants. The only repair flag is
+foreign-key orphans, broken invariants, cross-source identity matches
+and field-level differences between sources. The only repair flag is
 --clear-phantoms, which deletes marks whose claimed data is absent so the
 next scrape retries just those."""
 parser = argparse.ArgumentParser(prog = "bballVerify",
@@ -47,10 +48,16 @@ parser.add_argument("-d",
                     # choices = ["sqlite", "mysql", "postgresql"],
                     help = db_help)
 only_help = ("Comma-separated subset of sections to run: "
-             "phantoms,holes,orphans,invariants (default: all).")
+             "phantoms,holes,orphans,invariants,matches,diffs "
+             "(default: all).")
 parser.add_argument("--only",
                     default = "all",
                     help = only_help)
+pairs_help = ("In the matches section, list every confirmed cross-source "
+              "pair instead of just the summary count.")
+parser.add_argument("--show-pairs",
+                    action = "store_true",
+                    help = pairs_help)
 clear_help = """Delete phantom id_cache marks (and lying game_data marks) so the next
 scrape retries just those. A mark whose id still has referencing rows is
 never deleted -- re-scraping it would mint a new id and orphan those rows;
@@ -123,7 +130,10 @@ def main():
     counts = {s: {"finding": 0, "info": 0} for s in SECTIONS}
     for section in sections:
         print(f"== {section} ==")
-        rows = getattr(ver, section)()
+        if section == "matches":
+            rows = ver.matches(show_pairs = args.show_pairs)
+        else:
+            rows = getattr(ver, section)()
         if not rows:
             print("(clean)")
         for row in rows:
