@@ -40,7 +40,7 @@ class mysql(database):
         conn.close()
 
     @pass_none_location
-    def save_data(self, data, table):
+    def save_data(self, data, table, fill_defaults = False):
         col_string = ", ".join(data.keys())
         query_base = f"INSERT into {table} ({col_string}) VALUES "
         for row in zip(*data.values()):

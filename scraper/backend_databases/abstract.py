@@ -30,7 +30,7 @@ class database(ABC):
         self.location = location
 
     @abstractmethod
-    def save_data(self, data, table):
+    def save_data(self, data, table, fill_defaults=False):
         pass
 
     @abstractmethod

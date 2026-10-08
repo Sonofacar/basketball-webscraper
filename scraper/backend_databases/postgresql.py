@@ -32,7 +32,7 @@ class mysql(database):
         cur = conn.cursor()
         try:
             result = cur.query(command)
-        except: pg.error as e:
+        except pg.error as e:
             print(e)
         finally:
             conn.commit()
@@ -40,7 +40,7 @@ class mysql(database):
         conn.close()
 
     @pass_none_location
-    def save_data(self, data, table):
+    def save_data(self, data, table, fill_defaults = False):
         col_string = ", ".join(data.keys())
         query_base = f"INSERT into {table} ({col_string}) VALUES "
         for row in zip(*data.values()):
@@ -55,7 +55,7 @@ class mysql(database):
         try:
             result = cur.query(command)
             output = result.getresult()
-        except: pg.error as e:
+        except pg.error as e:
             print(e)
         finally:
             conn.commit()

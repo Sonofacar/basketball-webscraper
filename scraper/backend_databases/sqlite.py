@@ -43,9 +43,29 @@ class sqlite(database):
         conn.close()
 
     @pass_none_location
-    def save_data(self, data, table):
+    def save_data(self, data, table, fill_defaults=False):
         col_string = ", ".join(data.keys())
         query_base = f"INSERT into {table} ({col_string}) VALUES "
+        conflict = ""
+        if fill_defaults:
+            # season_info is the only table whose primary key (Season) is a
+            # natural key shared across sources -- id_cache marks are
+            # per-source, so a second source's plain INSERT would always
+            # collide on the PK and (post mark-after-save) never mark. On
+            # conflict, only cells still holding a default (0 or NULL, what
+            # refresh_output pads every unset field to) are replaced: the
+            # first writer wins per cell, later real data fills the blanks,
+            # a stub source's row is a no-op that still earns its mark, and
+            # a row whose mark was lost self-heals. Season itself (the
+            # conflict target) is never set. Only get_season_info passes
+            # this; any other table has no Season unique target and fails
+            # loudly at execute.
+            sets = ", ".join(
+                f"{col} = CASE WHEN {table}.{col} IS NULL "
+                f"OR {table}.{col} = 0 THEN excluded.{col} "
+                f"ELSE {table}.{col} END"
+                for col in data.keys() if col != "Season")
+            conflict = f" ON CONFLICT(Season) DO UPDATE SET {sets}"
         rows = list(zip(*data.values()))
         if not rows:
             # Non-empty column lists that zip to nothing mean the value
@@ -57,7 +77,7 @@ class sqlite(database):
             return False
         saved = 0
         for row in rows:
-            query = query_base + str(row) + ";"
+            query = query_base + str(row) + conflict + ";"
             if self.execute(query):
                 saved += 1
         return saved > 0

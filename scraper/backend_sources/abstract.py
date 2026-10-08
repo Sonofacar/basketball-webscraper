@@ -975,7 +975,8 @@ class engine(debug):
         self.database.save_data(id_data, "id_cache")
         cache.update({href: ID})
 
-    def _save_and_mark(self, output, table, href, ID, cache, location):
+    def _save_and_mark(self, output, table, href, ID, cache, location,
+                       fill_defaults=False):
         """Write the entity row first, then and only then its id_cache
         completion mark.
 
@@ -988,8 +989,13 @@ class engine(debug):
         `save_data` returning None (dry-run engines, where every write is a
         no-op by design) counts as success, so dry-run sessions still fill
         the in-memory dict exactly as they did before.
+
+        `fill_defaults` is forwarded to the backend: season_info's shared
+        Season key needs its fill-only-defaults upsert so a second source
+        merges instead of colliding on the primary key.
         """
-        if self.database.save_data(output, table) is False:
+        if self.database.save_data(output, table,
+                                   fill_defaults=fill_defaults) is False:
             log.error("could not write %s row for %s; not marking %s "
                       "complete in id_cache (will retry on next run)",
                       table, href, location)
@@ -1205,7 +1211,7 @@ class engine(debug):
             self.get_links(info)
             self._save_and_mark(info.output, 'season_info', href,
                                 info.season, self.season_id_cache,
-                                "season_info")
+                                "season_info", fill_defaults=True)
         return info
 
     @abstractmethod
