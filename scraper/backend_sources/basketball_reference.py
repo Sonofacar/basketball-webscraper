@@ -186,8 +186,8 @@ class season_info(abstract.season_info):
     def __init__(self, href, pager, id_cache):
         super().__init__(href, pager, id_cache)
         if not href in id_cache.keys():
-            tabs = self.soup.find('div', {'id': 'inner_nav'})
-            links = tabs.find('ul', {'class': 'hoversmooth'}).find_all('a')
+            tabs = self.soup.find('div', {'id': 'inner_nav_new'})
+            links = tabs.find('ul' ).find_all('a')
             self.playoffs_soup = pager.get(links[-1].attrs['href'])
 
             schedule = [x for x in links if 'Schedule and Results' in x.text][0]
