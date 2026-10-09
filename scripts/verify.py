@@ -26,12 +26,12 @@ from scraper.verify import Verifier, SECTIONS
 desc = """Verify existence and integrity of scraped basketball data.
 
 Read-only by default: prints a report of phantom marks, missing data,
-foreign-key orphans, broken invariants, cross-source identity matches
-and field-level differences between sources. Two repair flags exist:
---clear-phantoms deletes marks whose claimed data is absent so the next
-scrape retries just those, and --fix plans (or with --apply executes) the
-Phase 3 merges that collapse each confirmed cross-source pair into one
-row."""
+foreign-key orphans, broken invariants, cross-source identity matches,
+field-level differences between sources, and duplicate rows within one
+source. Two repair flags exist: --clear-phantoms deletes marks whose
+claimed data is absent so the next scrape retries just those, and --fix
+plans (or with --apply executes) the merges that collapse each confirmed
+cross-source cluster -- and each same-source duplicate -- into one row."""
 parser = argparse.ArgumentParser(prog = "bballVerify",
                                  prefix_chars = "-",
                                  description = desc,
@@ -50,7 +50,7 @@ parser.add_argument("-d",
                     # choices = ["sqlite", "mysql", "postgresql"],
                     help = db_help)
 only_help = ("Comma-separated subset of sections to run: "
-             "phantoms,holes,orphans,invariants,matches,diffs "
+             "phantoms,holes,orphans,invariants,matches,diffs,intrasource "
              "(default: all).")
 parser.add_argument("--only",
                     default = "all",
@@ -63,17 +63,20 @@ parser.add_argument("--show-pairs",
 clear_help = """Delete phantom id_cache marks (and lying game_data marks) so the next
 scrape retries just those. A mark whose id still has referencing rows is
 never deleted -- re-scraping it would mint a new id and orphan those rows;
-it stays in the report as needing the Phase 3 merge."""
+it stays in the report as needing the --fix merge."""
 parser.add_argument("--clear-phantoms",
                     action = "store_true",
                     help = clear_help)
-fix_help = """Plan the Phase 3 repairs: merge each confirmed cross-source cluster into
-one row (lowest id survives, unset cells filled from the duplicates, every
+fix_help = """Plan the repairs: merge each confirmed cross-source cluster into one row
+(lowest id survives, unset cells filled from the duplicates, every
 referencing column and source mark re-pointed, duplicate rows deleted),
-fold a crash-window row into a confirmed sibling, re-point a phantom mark
-and its children to a confirmed sibling, and re-insert a missing game_data
+collapse each repairable same-source duplicate the same way (a team or a
+game, or a player whose birthday is known; a referee never), fold a
+crash-window row into a confirmed sibling, re-point a phantom mark and its
+children to a confirmed sibling, and re-insert a missing game_data
 completion mark. Dry-run: prints the plan and writes nothing. Hrefs are
-never invented and same-source duplicate clusters stay report-only."""
+never invented and a same-source duplicate that cannot be confirmed stays
+report-only."""
 parser.add_argument("--fix",
                     action = "store_true",
                     help = fix_help)

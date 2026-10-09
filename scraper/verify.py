@@ -49,6 +49,23 @@ default and all-or-nothing when applied. Nothing is merged without a
 confirmed cross-source match, and a href is never invented: an unmarked
 row's lost mark is unrecoverable, so such cases stay report-only.
 
+Phase 4 adds `intrasource` -- duplicates *within* one source -- and extends
+`fix` to repair the safe ones. Every row (marked or unmarked) is bucketed by
+its natural key (team `(franchise, Season)`, game `(home, away, date)`,
+player `(name, birthday)`, referee `name`); a bucket with two rows from one
+source is a duplicate. It is repairable -- an `intrasource_merge` action
+folds the later ids into the lowest -- for a team or a game, and for a player
+only when the bucket has a real (non-None) birthday; a referee is never
+auto-merged (a name collision would alias two officials), and a player
+without a birthday is reported as an `ambiguous_key` (two people can share a
+name). An unmarked row is repairable when its bucket names exactly one marked
+sibling or one confirmed cross-source cluster, whose own mark it inherits;
+otherwise it stays report-only because a mark cannot be invented. Same-source
+merges run before the cross-source `merge`, so a cluster that spans two rows
+from one source collapses the duplicate first and then merges the
+representatives. Cross-source differences are unchanged: a merged entity
+leaves a single row, so it disappears from matches/diffs.
+
 Two conventions the checks depend on:
 
 * id_cache marks live in one of three per-source columns
@@ -77,7 +94,7 @@ SOURCE_COLUMNS = ("basketball_reference", "nba", "espn")
 
 # Report sections, in the order the CLI prints them.
 SECTIONS = ("phantoms", "holes", "orphans", "invariants",
-            "matches", "diffs")
+            "matches", "diffs", "intrasource")
 
 # id_cache type -> (table, primary key) for every type whose value column
 # points at a row. Deliberately parallel to backend_sources.abstract.ID_TABLES
@@ -103,6 +120,9 @@ ENTITY_TABLE = {
     "referee": "referee_info",
 }
 TABLE_ENTITY = {table: entity for entity, table in ENTITY_TABLE.items()}
+
+# The entities the intrasource checker buckets and merges, in report order.
+ENTITY_ORDER = ("team", "game", "player", "referee")
 
 # Where a phantom mark's id is still referenced from. A mark whose row is
 # gone but whose id still has referencing rows must NOT be cleared: the
@@ -432,11 +452,13 @@ def _is_unset(column, value):
     return value in FILL_SENTINELS.get(column, ())
 
 
-# Plan ordering: merges, then unmarked joins, then phantom re-points, then
-# mark inserts; within a kind by table, surviving id (or first rebased id)
-# and href. Deterministic so the dry-run plan and the applied plan agree.
-_ACTION_ORDER = {"merge": 0, "unmarked_merge": 1, "phantom_repoint": 2,
-                 "mark_insert": 3}
+# Plan ordering: same-source collapses first (so a cross-source merge only
+# re-points the surviving representative of each source), then merges, then
+# unmarked joins, then phantom re-points, then mark inserts; within a kind by
+# table, surviving id (or first rebased id) and href. Deterministic so the
+# dry-run plan and the applied plan agree.
+_ACTION_ORDER = {"intrasource_merge": 0, "merge": 1, "unmarked_merge": 2,
+                 "phantom_repoint": 3, "mark_insert": 4}
 
 
 def _action_order(action):
@@ -1187,19 +1209,14 @@ class Verifier:
             return len(clusters) - 1
 
         def split_group(entity, group_rows, what):
-            """Flag same-source duplicates; True if >= 2 sources present."""
-            by_src = {}
-            for item in group_rows:
-                by_src.setdefault(item[1], []).append(item)
-            for src, items in by_src.items():
-                if len(items) > 1:
-                    ids = ", ".join(str(i) for i, _ in items)
-                    findings.append(_finding(
-                        "matches", "duplicate",
-                        f"{entity}: source {src} has {len(items)} rows "
-                        f"for {what} (ids {ids}) -- possible duplicate "
-                        "(Phase 3 merge)"))
-            return len(by_src) >= 2
+            """True when a group spans >= 2 sources (so it can be a cluster).
+
+            Same-source duplicates are no longer flagged here: they are the
+            intrasource section's business, which buckets every row --
+            marked or not -- by natural key rather than only the groups the
+            cross-source matcher considered.
+            """
+            return len({item[1] for item in group_rows}) >= 2
 
         # ----- teams -----
 
@@ -1258,6 +1275,19 @@ class Verifier:
                 f"{len(unknown_teams)} team row(s) resolve to no franchise "
                 f"in the crosswalk; excluded from matching: {shown}",
                 count=len(unknown_teams)))
+
+        # Every team row's franchise, marked or not, for the natural-key
+        # buckets. Marked rows already resolved above; an unmarked row has
+        # no href, so it resolves from its own Name/Abbreviation only.
+        team_slug_all = dict(team_slug)
+        for tid in sorted(team_rows):
+            if tid in team_slug_all:
+                continue
+            row = team_rows[tid]
+            slug = identity.resolve_team(name=row["Name"],
+                                         abbrev=row["Abbreviation"])
+            if slug is not None:
+                team_slug_all[tid] = slug
 
         team_groups = {}
         for tid, slug in team_slug.items():
@@ -1438,24 +1468,8 @@ class Verifier:
                     elif len(cand1.get(als[0][0]["id"], ())) == 1:
                         confirmed_edges.append((als[0][0], b, als[0][1]))
 
-        # Same-source duplicates: two rows for one matchup on one day. An
-        # NBA game is never played twice on the same date, so the date
-        # check alone is enough and the scores need not agree.
-        for s in srcs:
-            index = {}
-            for g in by_src[s]:
-                index.setdefault((g["home"], g["away"]), []).append(g)
-            for bucket in index.values():
-                for x in range(len(bucket)):
-                    for y in range(x + 1, len(bucket)):
-                        a, b = bucket[x], bucket[y]
-                        if identity.day_diff(a["date"], b["date"]) == 0:
-                            findings.append(_finding(
-                                "matches", "duplicate",
-                                f"game: source {s} has two game_info rows "
-                                f"for {a['home']} vs {a['away']} on "
-                                f"{a['date']} (ids {a['id']}, {b['id']}) "
-                                "-- possible duplicate (Phase 3 merge)"))
+        # Same-source game duplicates are reported by the intrasource
+        # section, which buckets by natural key over every row.
 
         parent = {}
 
@@ -1594,16 +1608,8 @@ class Verifier:
             by_src_g = {}
             for item in group:
                 by_src_g.setdefault(item[1], []).append(item)
-            for src, items in by_src_g.items():
-                if len(items) > 1:
-                    # ESPN keys referees by a name slug, so two rows with
-                    # one name in one source are a collision or a repeat.
-                    ids = ", ".join(str(r) for r, _ in items)
-                    findings.append(_finding(
-                        "matches", "ambiguous",
-                        f"referee {name!r}: source {src} has {len(items)} "
-                        f"rows (ids {ids}) -- ambiguous (duplicate or name "
-                        "collision), report-only"))
+            # Same-source referee duplicates (two rows, one name, one
+            # source) are the intrasource section's business.
             singles = [item for items in by_src_g.values()
                        if len(items) == 1 for item in items]
             if len({s for _, s in singles}) >= 2:
@@ -1626,24 +1632,64 @@ class Verifier:
         attributed("executive_info", "executive_info", "Executive_ID")
         attributed("season_info", "season_info", "Season")
 
+        # Every row's natural key, marked or not. `keys` buckets them (the
+        # intrasource section and the unmarked-row repair both read it) and
+        # `key_of` is the reverse lookup a single row uses.
+        def natural_key(entity, row_id):
+            row = rows[ENTITY_TABLE[entity]].get(row_id)
+            if row is None:
+                return None
+            if entity == "team":
+                slug = team_slug_all.get(row_id)
+                return None if slug is None else (slug, row["Season"])
+            if entity == "game":
+                home = team_slug_all.get(row["Home_Team_ID"])
+                away = team_slug_all.get(row["Away_Team_ID"])
+                date = identity.normalize_date(row["Date"])
+                if home is None or away is None or date is None:
+                    return None
+                return (home, away, date)
+            if entity == "player":
+                name = identity.normalize_name(row["Name"])
+                if not name:
+                    return None
+                return (name, identity.normalize_birthday(row["Birthday"]))
+            name = identity.normalize_name(row["Name"])
+            return None if not name else name
+
+        keys = {entity: {} for entity in ENTITY_ORDER}
+        key_of = {entity: {} for entity in ENTITY_ORDER}
+        for entity in ENTITY_ORDER:
+            table = ENTITY_TABLE[entity]
+            for row_id in sorted(rows[table]):
+                key = natural_key(entity, row_id)
+                if key is None:
+                    continue
+                a = attrib[table].get(row_id)
+                keys[entity].setdefault(key, []).append(
+                    (row_id, a["source"] if a else None,
+                     a["href"] if a else None))
+                key_of[entity][row_id] = key
+
         summary = {"team": 0, "game": 0, "player": 0, "referee": 0}
         for entity, *_ in pairs:
             summary[entity] += 1
 
         return {"findings": findings, "clusters": clusters, "pairs": pairs,
                 "summary": summary, "rows": rows, "attrib": attrib,
-                "team_slug": team_slug, "games": games,
-                "player_map": player_map}
+                "team_slug": team_slug, "team_slug_all": team_slug_all,
+                "games": games, "player_map": player_map,
+                "keys": keys, "key_of": key_of}
 
     def matches(self, show_pairs = False):
         """Cross-source identity: which rows are the same real entity.
 
-        Read-only, report-only -- nothing is merged (that is Phase 3's
-        --fix). Confirmed pairs print as one summary count unless
-        show_pairs lists them individually; everything that could not be
-        confirmed -- ambiguous candidate sets, same-score near-misses,
-        score conflicts, same-source duplicates, unresolvable rows --
-        prints as findings or aggregated info.
+        Read-only, report-only -- nothing is merged (that is --fix).
+        Confirmed pairs print as one summary count unless show_pairs lists
+        them individually; everything that could not be confirmed --
+        ambiguous candidate sets, same-score near-misses, score conflicts,
+        unresolvable rows -- prints as findings or aggregated info.
+        Same-source duplicates live in the intrasource section.
         """
         ident = self._identity()
         out = list(ident["findings"])
@@ -1889,6 +1935,159 @@ class Verifier:
                     f"on {n} game(s); not compared (ESPN publishes no "
                     "quarter splits at all; within-source quarter "
                     "coverage is the holes section's missing_quarters)"))
+        return out
+
+    # ---------- section 7: within-source duplicates ----------
+
+    @staticmethod
+    def _key_repairable(entity, key):
+        """Can a same-source duplicate under this key be auto-merged?
+
+        A team or a game is always safe. A player only when the bucket pins
+        a real birthday: two people can share a name, so a bucket whose
+        birthday is None cannot confirm one person. A referee is never
+        auto-merged -- two officials can share a name and there is no other
+        field to separate them, so a name collision would alias them.
+        """
+        if entity in ("team", "game"):
+            return True
+        if entity == "player":
+            return key[1] is not None
+        return False
+
+    @staticmethod
+    def _key_display(entity, key):
+        if entity == "team":
+            return f"franchise {key[0]} season {key[1]}"
+        if entity == "game":
+            return f"{key[0]} vs {key[1]} on {key[2]}"
+        if entity == "player":
+            return f"player {key[0]!r} birthday {key[1] or 'unknown'}"
+        return f"referee {key!r}"
+
+    @staticmethod
+    def _representatives(members):
+        """{source: lowest id} for a cluster's (id, source) members."""
+        out = {}
+        for row_id, source in members:
+            if source not in out or row_id < out[source]:
+                out[source] = row_id
+        return out
+
+    def _clusters_by_key(self, ident):
+        """(entity, natural key) -> the confirmed clusters that key names."""
+        out = {}
+        for cluster in ident["clusters"]:
+            key = self._cluster_key(cluster["entity"], cluster["rows"])
+            if key is None:
+                continue
+            out.setdefault((cluster["entity"], key), []).append(cluster)
+        return out
+
+    def intrasource(self):
+        """Duplicates within a single source, over every row.
+
+        Every row -- marked or not -- is bucketed by its natural key (team
+        `(franchise, Season)`, game `(home, away, date)`, player
+        `(name, birthday)`, referee `name`); two rows from one source in a
+        bucket are the same real entity reached twice. `dup_same_href`
+        (info) means the duplicate marks even share a href, `dup_diff_href`
+        (finding) that they do not; both are repairable when the entity is
+        (`_key_repairable`), which the message states. A same-source
+        duplicate of an entity that is never merged is `same_source_
+        duplicate` (finding) -- a referee name collision. A player bucket
+        with no birthday that holds a same-source duplicate is
+        `ambiguous_key` (finding) instead, because two people can share a
+        name and the bucket cannot confirm one person. An unmarked row is
+        `unmarked_duplicate` (info) when its bucket names one marked
+        sibling or one confirmed cluster to inherit the mark from, else
+        `unmarked_no_mark` (finding).
+
+        Read-only.
+        """
+        ident = self._identity()
+        clusters = self._clusters_by_key(ident)
+        out = []
+        for entity in ENTITY_ORDER:
+            for key in sorted(ident["keys"][entity], key=repr):
+                items = ident["keys"][entity][key]
+                if len(items) < 2:
+                    continue
+                what = self._key_display(entity, key)
+                by_src = {}
+                for row_id, source, href in items:
+                    if source is not None:
+                        by_src.setdefault(source, []).append((row_id, href))
+                same_source = any(len(g) >= 2 for g in by_src.values())
+                if entity == "player" and key[1] is None and same_source:
+                    ids = ", ".join(str(i) for i, _, _ in items)
+                    out.append(_finding(
+                        "intrasource", "ambiguous_key",
+                        f"{what}: {len(items)} row(s) share this name but "
+                        f"have no birthday (ids {ids}) -- two people can "
+                        "share a name, so they cannot be confirmed as one; "
+                        "report-only"))
+                    continue
+                repairable = self._key_repairable(entity, key)
+                for source in sorted(by_src, key=SOURCE_COLUMNS.index):
+                    group = by_src[source]
+                    if len(group) < 2:
+                        continue
+                    ids = [i for i, _ in group]
+                    survivor = min(ids)
+                    hrefs = {h for _, h in group}
+                    if not repairable:
+                        out.append(_finding(
+                            "intrasource", "same_source_duplicate",
+                            f"{entity}: source {source} has {len(group)} "
+                            f"rows for {what} (ids "
+                            f"{', '.join(str(i) for i in ids)}) -- "
+                            "report-only (this entity is never "
+                            "auto-merged)"))
+                    elif len(hrefs) == 1 and all(hrefs):
+                        out.append(_info(
+                            "intrasource", "dup_same_href",
+                            f"{entity}: source {source} has {len(group)} "
+                            f"rows for {what} sharing href "
+                            f"{next(iter(hrefs))!r} (ids "
+                            f"{', '.join(str(i) for i in ids)}); --fix "
+                            f"merges them into {survivor}"))
+                    else:
+                        out.append(_finding(
+                            "intrasource", "dup_diff_href",
+                            f"{entity}: source {source} has {len(group)} "
+                            f"rows for {what} with different hrefs (ids "
+                            f"{', '.join(str(i) for i in ids)}); --fix "
+                            f"merges them into {survivor}"))
+                unmarked = [i for i, s, _ in items if s is None]
+                if unmarked:
+                    marked_total = len(items) - len(unmarked)
+                    has_sibling = repairable and (
+                        len(clusters.get((entity, key), [])) == 1 or
+                        marked_total == 1)
+                    if has_sibling:
+                        out.append(_info(
+                            "intrasource", "unmarked_duplicate",
+                            f"{entity}: {len(unmarked)} unmarked row(s) "
+                            f"({', '.join(str(i) for i in unmarked)}) for "
+                            f"{what} can inherit a mark from the marked "
+                            "sibling; --fix folds them in"))
+                    else:
+                        out.append(_finding(
+                            "intrasource", "unmarked_no_mark",
+                            f"{entity}: {len(unmarked)} unmarked row(s) "
+                            f"({', '.join(str(i) for i in unmarked)}) for "
+                            f"{what} have no single marked sibling; "
+                            "report-only (a mark cannot be invented)"))
+        counts = {}
+        for row in out:
+            counts[row["kind"]] = counts.get(row["kind"], 0) + 1
+        parts = ", ".join(
+            f"{counts.get(k, 0)} {k}" for k in
+            ("dup_same_href", "dup_diff_href", "same_source_duplicate",
+             "unmarked_duplicate", "unmarked_no_mark", "ambiguous_key"))
+        out.append(_info("intrasource", "summary",
+                         f"within-source groups: {parts}", **counts))
         return out
 
     # ---------- exists() API ----------
@@ -2275,12 +2474,12 @@ class Verifier:
     # ---------- section 7: Phase 3 merge (--fix) ----------
 
     def fix(self):
-        """Dry-run plan for the Phase 3 repairs; writes nothing.
+        """Dry-run plan for the Phase 3/4 repairs; writes nothing.
 
         Every row is section "fix", severity "info": a plan is not itself a
         defect (the underlying duplicates and holes are already reported by
-        matches/phantoms/holes), it is what `--apply` would execute. See
-        `_fix_plan` for the repairs covered.
+        matches/phantoms/holes/intrasource), it is what `--apply` would
+        execute. See `_fix_plan` for the repairs covered.
         """
         actions, report_only = self._fix_plan()
         return self._fix_rows(actions, report_only)
@@ -2320,7 +2519,16 @@ class Verifier:
                 (action["href"], action["value"], action["type"]))
             return
         table, pk = action["table"], action["pk"]
+        # Fills are guarded: a same-source collapse runs before a
+        # cross-source merge, so an earlier action may already have filled
+        # the cell from a better source and a plan-time fill must not
+        # clobber it.
         for column, value in action["fills"]:
+            cur = con.execute(
+                f"SELECT {column} AS v FROM {table} WHERE {pk} = ?",
+                (action["survivor"],)).fetchone()
+            if cur is None or not _is_unset(column, cur["v"]):
+                continue
             con.execute(f"UPDATE {table} SET {column} = ? WHERE {pk} = ?",
                         (value, action["survivor"]))
         # Ownership of the boxscore children must be captured before the
@@ -2340,6 +2548,24 @@ class Verifier:
             if item["delete_row"]:
                 con.execute(f"DELETE FROM {table} WHERE {pk} = ?", (moved,))
         self._dedup_children(con, action["entity"], captured)
+        self._collapse_marks(con, action["type"], action["survivor"])
+
+    def _collapse_marks(self, con, id_type, value):
+        """Drop exact duplicate marks left by a re-point.
+
+        Two same-source rows merged into one leave two id_cache rows with
+        the same (source href, type, value). They are harmless -- the UNIQUE
+        constraint treats NULL columns as distinct -- but stale, so keep one.
+        A mark with a *different* href is kept: after a same-source merge
+        both hrefs legitimately name the survivor.
+        """
+        for col in SOURCE_COLUMNS:
+            con.execute(
+                f"DELETE FROM id_cache WHERE type = ? AND value = ? "
+                f"AND {col} IS NOT NULL AND rowid NOT IN ("
+                f"SELECT MIN(rowid) FROM id_cache WHERE type = ? AND "
+                f"value = ? AND {col} IS NOT NULL GROUP BY {col})",
+                (id_type, value, id_type, value))
 
     def _capture_children(self, con, entity, survivor, rebase):
         """Rowids (and preference rank) of boxscore rows a merge touches.
@@ -2390,44 +2616,70 @@ class Verifier:
                 con.execute(f"DELETE FROM {table} WHERE rowid = ?", (rid,))
 
     def _fix_plan(self):
-        """Compute every Phase 3 repair without touching the database.
+        """Compute every repair without touching the database.
 
         Returns (actions, report_only). Actions are executable dicts:
-        `merge` (fold whole duplicate rows into a survivor), `unmarked_merge`
-        (fold a crash-window row in), `phantom_repoint` (re-point a missing
-        row's mark and children) and `mark_insert` (re-insert a missing
-        game_data completion flag). `report_only` names what looks repairable
-        but is deliberately left alone -- same-source duplicate clusters, and
-        anything whose identity cannot be recovered without inventing a href
-        or a mark.
+        `intrasource_merge` (fold two rows one source reached twice),
+        `merge` (fold a confirmed cross-source cluster into a survivor),
+        `unmarked_merge` (fold a crash-window row in), `phantom_repoint`
+        (re-point a missing row's mark and children) and `mark_insert`
+        (re-insert a missing game_data completion flag). `report_only` names
+        what looks repairable but is deliberately left alone -- a same-source
+        duplicate of an entity that is never merged (a referee, a player
+        without a birthday), and anything whose identity cannot be recovered
+        without inventing a href or a mark.
         """
         ident = self._identity()
         marks_by_type = {}
         for m in self._all_marks():
             marks_by_type.setdefault(m["type"], []).append(m)
+        keys, key_of = ident["keys"], ident["key_of"]
 
         actions, report_only = [], []
 
-        # Partition the confirmed clusters: one row per source is a clean
-        # merge; two rows from one source is a same-source duplicate (not
-        # auto-merged); a cluster with no natural key cannot be a join
-        # target. Index each mergeable cluster's key so unmarked rows and
-        # phantom marks can find their surviving sibling.
-        keyed = {entity: {} for entity in ENTITY_TABLE}
-        mergeable = []
+        # A natural-key bucket whose same-source duplicate cannot be merged
+        # (a referee, or a player with no birthday) blocks the whole bucket,
+        # so its cross-source merge is left alone too rather than repairing
+        # half a cluster.
+        blocked = {}
+        for entity in ENTITY_ORDER:
+            for key, items in keys[entity].items():
+                by_src = {}
+                for row_id, source, _href in items:
+                    if source is not None:
+                        by_src.setdefault(source, []).append(row_id)
+                if any(len(ids) > 1 and
+                       not self._key_repairable(entity, key)
+                       for ids in by_src.values()):
+                    blocked[(entity, key)] = True
+
+        # Same-source duplicates, over every marked row: a source with k>1
+        # rows in one bucket collapses to its lowest id.
+        for entity in ENTITY_ORDER:
+            for key in sorted(keys[entity], key=repr):
+                if blocked.get((entity, key)):
+                    continue
+                by_src = {}
+                for row_id, source, _href in keys[entity][key]:
+                    if source is not None:
+                        by_src.setdefault(source, []).append(row_id)
+                for source in sorted(by_src, key=SOURCE_COLUMNS.index):
+                    ids = by_src[source]
+                    if len(ids) < 2:
+                        continue
+                    survivor = min(ids)
+                    rebase = sorted(i for i in ids if i != survivor)
+                    actions.append(self._intrasource_action(
+                        entity, key, source, survivor, rebase))
+
+        # Confirmed cross-source clusters: merge the surviving
+        # representative of each source -- any same-source duplicate was
+        # already collapsed above. A keyless or blocked cluster stays
+        # report-only.
+        clusters_by_key = self._clusters_by_key(ident)
         for cluster in ident["clusters"]:
             entity = cluster["entity"]
             members = sorted(cluster["rows"], key=_source_order)
-            sources = [s for _, s in members]
-            if len(set(sources)) != len(sources):
-                report_only.append({
-                    "kind": "same_source",
-                    "message":
-                        f"{ENTITY_TABLE[entity]}: confirmed cluster spans "
-                        f"{len(members)} row(s) across "
-                        f"{len(set(sources))} source(s); same-source "
-                        "duplicate merges are report-only"})
-                continue
             key = self._cluster_key(entity, members)
             if key is None:
                 report_only.append({
@@ -2436,19 +2688,27 @@ class Verifier:
                         f"{ENTITY_TABLE[entity]}: confirmed cluster has no "
                         "resolvable natural key; report-only"})
                 continue
-            mergeable.append((cluster, members))
-            keyed[entity].setdefault(key, []).append((cluster, members))
-
-        for cluster, members in mergeable:
-            actions.append(self._merge_action(cluster, members))
+            if blocked.get((entity, key)):
+                report_only.append({
+                    "kind": "same_source",
+                    "message":
+                        f"{ENTITY_TABLE[entity]}: confirmed cluster "
+                        f"({cluster['note']}) includes a same-source "
+                        "duplicate that is never auto-merged; report-only"})
+                continue
+            reps = self._representatives(members)
+            reps_sorted = sorted(((i, s) for s, i in reps.items()),
+                                 key=_source_order)
+            if len(reps_sorted) < 2:
+                continue
+            actions.append(self._merge_action(cluster, reps_sorted))
 
         phantom_rows = self.phantoms()
 
         # Unmarked rows: the mark that produced them is gone and cannot be
-        # invented, so the only sound repair is to fold the row into an
-        # already-confirmed cross-source sibling when its natural key names
-        # exactly one.
-        all_team_slug = self._all_team_slug()
+        # invented, so the only sound repair is to fold the row into the
+        # sibling its natural key names exactly -- one confirmed cross-source
+        # cluster, or a single marked row (the same-source case).
         for finding in phantom_rows:
             if finding["kind"] != "unmarked_row":
                 continue
@@ -2456,25 +2716,44 @@ class Verifier:
             if entity is None:
                 continue  # season_info self-heals on the next scrape
             row_id = finding["value"]
-            key = self._unmarked_key(entity, row_id, all_team_slug)
-            candidates = keyed[entity].get(key) if key is not None else None
-            if not candidates:
+            key = key_of[entity].get(row_id)
+            if key is None or blocked.get((entity, key)):
                 report_only.append({
                     "kind": "no_sibling",
                     "message":
                         f"{finding['type']} row {row_id} has no id_cache "
-                        "mark and no confirmable cross-source sibling; "
-                        "report-only (a mark cannot be invented)"})
+                        "mark and no confirmable sibling; report-only (a "
+                        "mark cannot be invented)"})
                 continue
-            if len(candidates) > 1:
+            clusters_for_key = clusters_by_key.get((entity, key), ())
+            marked = [(i, s) for i, s, _h in keys[entity].get(key, ())
+                      if s is not None]
+            if len(clusters_for_key) == 1:
+                members = sorted(clusters_for_key[0]["rows"],
+                                 key=_source_order)
+            elif len(marked) == 1:
+                members = marked
+            elif len(clusters_for_key) > 1:
                 report_only.append({
                     "kind": "ambiguous",
                     "message":
                         f"{finding['type']} row {row_id} matches "
-                        f"{len(candidates)} confirmed clusters; report-only"})
+                        f"{len(clusters_for_key)} confirmed clusters; "
+                        "report-only"})
                 continue
+            else:
+                report_only.append({
+                    "kind": "no_sibling",
+                    "message":
+                        f"{finding['type']} row {row_id} has no id_cache "
+                        "mark and no confirmable sibling; report-only (a "
+                        "mark cannot be invented)"})
+                continue
+            reps = self._representatives(members)
+            reps_sorted = sorted(((i, s) for s, i in reps.items()),
+                                 key=_source_order)
             actions.append(self._unmarked_action(
-                entity, row_id, candidates[0][1]))
+                entity, row_id, reps_sorted))
 
         # Phantom marks whose row is gone but whose id still has referencing
         # rows: re-point the mark and every child to a confirmed sibling.
@@ -2497,7 +2776,7 @@ class Verifier:
                 continue
             key = self._phantom_team_key(finding.get("source"),
                                          finding.get("href"), learned)
-            candidates = keyed["team"].get(key) if key is not None else None
+            candidates = clusters_by_key.get(("team", key), ())
             if not candidates:
                 report_only.append({
                     "kind": "no_sibling",
@@ -2514,7 +2793,10 @@ class Verifier:
                         f"matches {len(candidates)} confirmed clusters; "
                         "report-only"})
                 continue
-            actions.append(self._phantom_action(finding, candidates[0][1]))
+            members = self._representatives(candidates[0]["rows"])
+            members = sorted(((i, s) for s, i in members.items()),
+                             key=_source_order)
+            actions.append(self._phantom_action(finding, members))
 
         # Boxscore present but no completion flag: re-insert the flag from
         # the game's own game_info mark href -- nothing is invented.
@@ -2539,6 +2821,26 @@ class Verifier:
         actions.sort(key=_action_order)
         report_only.sort(key=lambda r: (r["kind"], r["message"]))
         return actions, report_only
+
+    def _intrasource_action(self, entity, key, source, survivor, rebase):
+        """Collapse one source's duplicate rows for a natural key."""
+        table = ENTITY_TABLE[entity]
+        pk = ROW_TARGETS[table][1]
+        survivor_row = self._ident["rows"][table][survivor]
+        fills = self._fill_cells(table, survivor_row, rebase)
+        referenced, marks = self._merge_stats(table, rebase)
+        dupes = ", ".join(str(i) for i in rebase)
+        return {
+            "kind": "intrasource_merge", "entity": entity, "table": table,
+            "pk": pk, "type": table, "survivor": survivor,
+            "rebase": [{"id": i, "delete_row": True} for i in rebase],
+            "fills": fills,
+            "message": (f"{table}: merge same-source {source} row(s) "
+                        f"{dupes} into {survivor} for "
+                        f"{self._key_display(entity, key)}; {marks} source "
+                        f"mark(s) moved, {referenced} referencing row(s) "
+                        f"re-pointed, {len(fills)} cell(s) filled, "
+                        f"{len(rebase)} row(s) deleted")}
 
     def _merge_action(self, cluster, members):
         entity = cluster["entity"]
@@ -2656,48 +2958,6 @@ class Verifier:
         name = identity.normalize_name(row["Name"])
         return None if not name else name
 
-    def _unmarked_key(self, entity, row_id, all_team_slug):
-        """Natural key of an unmarked row, from the row itself (no href)."""
-        rows = self._ident["rows"]
-        if entity == "team":
-            row = rows["team_info"].get(row_id)
-            slug = all_team_slug.get(row_id) if row is not None else None
-            return None if slug is None else (slug, row["Season"])
-        if entity == "game":
-            row = rows["game_info"].get(row_id)
-            if row is None:
-                return None
-            home = all_team_slug.get(row["Home_Team_ID"])
-            away = all_team_slug.get(row["Away_Team_ID"])
-            date = identity.normalize_date(row["Date"])
-            if home is None or away is None or date is None:
-                return None
-            return (home, away, date)
-        if entity == "player":
-            row = rows["player_info"].get(row_id)
-            if row is None:
-                return None
-            return (identity.normalize_name(row["Name"]),
-                    identity.normalize_birthday(row["Birthday"]))
-        row = rows["referee_info"].get(row_id)
-        if row is None:
-            return None
-        name = identity.normalize_name(row["Name"])
-        return None if not name else name
-
-    def _all_team_slug(self):
-        """Team_ID -> franchise slug for every team row, marked or not."""
-        ident = self._ident
-        out = {}
-        for tid, row in ident["rows"]["team_info"].items():
-            a = ident["attrib"]["team_info"].get(tid)
-            href = a["href"] if a else None
-            slug = identity.resolve_team(href=href, name=row["Name"],
-                                         abbrev=row["Abbreviation"])
-            if slug is not None:
-                out[tid] = slug
-        return out
-
     def _learned_team_ids(self):
         """(source, numeric href id) -> slug, learned from marked rows."""
         ident = self._ident
@@ -2761,7 +3021,8 @@ class Verifier:
             counts[action["kind"]] = counts.get(action["kind"], 0) + 1
         parts = ", ".join(
             f"{counts.get(kind, 0)} {kind}" for kind in
-            ("merge", "unmarked_merge", "phantom_repoint", "mark_insert"))
+            ("intrasource_merge", "merge", "unmarked_merge",
+             "phantom_repoint", "mark_insert"))
         out.append(_info(
             "fix", "summary",
             f"fix plan: {len(actions)} action(s) ({parts}); "
